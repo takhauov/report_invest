@@ -222,23 +222,23 @@
     if (calc.noStock && calc.noStock.length) h += '<div class="note warn"><b>Не учтены в продажах, нет в наличии у инвестора:</b> ' + calc.noStock.map(function (x) { return esc(x.product) + ' (по доле ' + fmt(x.sold) + ' шт)'; }).join(', ') + '. Продажи считаются только по товарам, которые есть на складе инвестора. Если товар был, проверьте закупки и статус «на складе».</div>';
     if (calc.capped && calc.capped.length) h += '<div class="note warn"><b>Продажи ограничены остатком на складе:</b> ' + calc.capped.map(function (x) { return esc(x.product) + ' — по доле ' + fmt(x.raw) + ' шт, учтено ' + fmt(x.sold) + ' шт'; }).join('; ') + '. Проверьте закупки: возможно, не внесена новая партия.</div>';
     if (calc.missingCost.length) h += '<div class="note warn"><b>Нет себестоимости:</b> ' + calc.missingCost.map(esc).join(', ') + '. Пока она считается как 0 — добавьте закупку на вкладке «Товар инвестора», иначе движение денег будет занижено.</div>';
-    if (!rec.pctFound) h += '<div class="note warn"><b>Проценты ФОТ и фулфилмента взяты не из отчётов</b> (нужный месяц не нашёлся на листе ОПиУ). Проверьте значения ниже и нажмите «Пересчитать».</div>';
+    if (!rec.pctFound) h += '<div class="note warn"><b>Проценты расходов и фулфилмента взяты не из отчётов</b> (нужный месяц не нашёлся на листе ОПиУ). Проверьте значения ниже и нажмите «Пересчитать».</div>';
     if (calc.unmapped.length) {
       h += '<div class="note info"><b>Не учтено артикулов с продажами: ' + calc.unmapped.length + '</b> (аксессуары и прочее, что не входит в товар инвестора). Чтобы учитывать — сопоставьте их на вкладке «Справочник».</div>';
     }
 
     h += '<section class="bento">' +
-      kpi('Чистая прибыль за месяц', rub(t.net), sgn(t.net), 'wide', 'после фулфилмента и ФОТ') +
+      kpi('Чистая прибыль за месяц', rub(t.net), sgn(t.net), 'wide', 'после расходов (ФОТ, налоги, прочее) и фулфилмента') +
       kpi('Выручка', rub(t.revenue)) +
       kpi('Валовая прибыль', rub(t.gross), sgn(t.gross)) +
       kpi('Прибыль накопленным итогом', rub(row.cumProfit), sgn(row.cumProfit)) +
       kpi('Продано, шт', fmt(t.sold), '', '', 'доля инвестора ' + C.formatShare(calc.share) + ' от продаж') +
       kpi('Средняя прибыль на единицу', rub(t.avgProfit), sgn(t.avgProfit), '', 'по всем кабинетам, взвешено по продажам') +
-      kpi('ФОТ, сервисы и фулфилмент', pct(rec.fotPct + rec.fulfillPct), '', '', rub(t.fot + t.fulfill) + ' от выручки') +
+      kpi('Расходы и фулфилмент', pct(rec.fotPct + rec.fulfillPct), '', '', rub(t.fot + t.fulfill) + ' от выручки') +
       '</section>';
 
     h += '<div class="card"><h2>Расчёт по товарам · ' + esc(C.monthLabel(key)) + '</h2><div class="tbl-wrap"><table><thead><tr>' +
-      '<th>Товар</th><th>Закуп, ₽/шт</th><th>Продано, шт</th><th>Цена (средняя), ₽</th><th>Прибыль/ед (средняя), ₽</th><th>Выручка, ₽</th><th>Вал. прибыль, ₽</th><th>Фулфилмент, ₽</th><th>ФОТ и сервисы, ₽</th><th>Чистая прибыль, ₽</th></tr></thead><tbody>';
+      '<th>Товар</th><th>Закуп, ₽/шт</th><th>Продано, шт</th><th>Цена (средняя), ₽</th><th>Прибыль/ед (средняя), ₽</th><th>Выручка, ₽</th><th>Вал. прибыль, ₽</th><th>Фулфилмент, ₽</th><th>Расходы, ₽</th><th>Чистая прибыль, ₽</th></tr></thead><tbody>';
     calc.products.forEach(function (p) {
       h += '<tr><td>' + esc(p.product) + '</td><td>' + (p.cost == null ? '—' : fmt(p.cost)) + '</td><td>' + fmt(p.sold) + '</td><td>' + fmt(p.price) + '</td><td class="' + sgn(p.profitUnit) + '">' + fmt(p.profitUnit) + '</td>' +
         '<td>' + fmt(p.revenue) + '</td><td class="' + sgn(p.gross) + '">' + fmt(p.gross) + '</td><td>' + fmt(p.fulfill) + '</td><td>' + fmt(p.fot) + '</td><td class="' + sgn(p.net) + '">' + fmt(p.net) + '</td></tr>';
@@ -248,7 +248,7 @@
 
     // Откуда взялись данные
     var srcs = C.recSources(rec);
-    h += '<div class="card"><h2>Отчёты за месяц</h2><div class="tbl-wrap"><table><thead><tr><th>Маркетплейс</th><th>Кабинет</th><th>Файл</th><th>Артикулов</th><th>ФОТ и сервисы</th><th>Фулфилмент</th><th></th></tr></thead><tbody>' +
+    h += '<div class="card"><h2>Отчёты за месяц</h2><div class="tbl-wrap"><table><thead><tr><th>Маркетплейс</th><th>Кабинет</th><th>Файл</th><th>Артикулов</th><th>Расходы, % от реализации</th><th>Фулфилмент</th><th></th></tr></thead><tbody>' +
       srcs.map(function (s) {
         return '<tr><td>' + esc(C.MARKET_LABEL[s.marketplace] || s.marketplace) + '</td><td class="left">' + esc(s.entity || '—') + '</td><td class="left">' + esc(s.file || '—') + '</td><td>' + fmt((s.articles || []).length) + '</td>' +
           '<td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fot / s.amounts.base) : '—') + '</td><td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fulfill / s.amounts.base) : '—') + '</td>' +
@@ -267,7 +267,7 @@
 
     h += '<div class="card no-print"><h2>Пересчёт</h2><div class="form-row" style="margin-top:0">' +
       '<div><label for="shareInp">Доля продаж инвестора</label><input id="shareInp" type="text" value="' + esc(C.formatShare(calc.share)) + '" placeholder="1/3"' + dis() + '></div>' +
-      '<div><label for="fotPct">ФОТ и сервисы, % от выручки</label><input id="fotPct" type="number" step="0.01" min="0" value="' + (Math.round(rec.fotPct * 10000) / 100) + '"' + dis() + '></div>' +
+      '<div><label for="fotPct">Расходы (ФОТ, налоги, прочее), % от выручки</label><input id="fotPct" type="number" step="0.01" min="0" value="' + (Math.round(rec.fotPct * 10000) / 100) + '"' + dis() + '></div>' +
       '<div><label for="fulPct">Услуги фулфилмента, % от выручки</label><input id="fulPct" type="number" step="0.01" min="0" value="' + (Math.round(rec.fulfillPct * 10000) / 100) + '"' + dis() + '></div>' +
       '<div><button class="btn" type="button" data-act="recalc"' + dis() + '>Пересчитать</button></div></div>' +
       '<div class="toolbar" style="margin:16px 0 0">' +
@@ -627,7 +627,7 @@
       if (it.parsed) {
         var p = it.parsed;
         html += '<div style="margin-top:8px"><b>' + esc(C.MARKET_LABEL[p.marketplace]) + ' · ' + esc(p.entity || it.name) + '</b> — артикулов: ' + p.articles.length + ' · ' +
-          (p.pctFound ? 'ФОТ и сервисы ' + pct(p.fotPct) + ', фулфилмент ' + pct(p.fulfillPct) : 'проценты не найдены') +
+          (p.pctFound ? 'расходы ' + pct(p.fotPct) + ', фулфилмент ' + pct(p.fulfillPct) : 'проценты не найдены') +
           (p.warnings.length ? '<br><span style="color:var(--warn)">' + p.warnings.map(esc).join('<br>') + '</span>' : '') + '</div>';
       } else {
         html += '<div style="margin-top:8px"><b>' + esc(it.name) + '</b><br><span class="neg">' + esc(it.error || 'Не удалось прочитать файл') + '</span></div>';
@@ -637,7 +637,7 @@
     if (ok.length) {
       var gp = C.groupByProduct({ sources: ok }, state.data.settings.mapping), bl = C.blendPct(ok);
       html += '<div style="margin-top:12px;color:var(--text)">Учтено товаров: <b>' + gp.groups.length + '</b> · артикулов без привязки (с продажами): <b>' + gp.unmapped.length + '</b>' +
-        (bl.found ? '<br>Общие проценты: ФОТ и сервисы <b>' + pct(bl.fotPct) + '</b>, фулфилмент <b>' + pct(bl.fulfillPct) + '</b>' : '<br>Проценты расходов не найдены, будут взяты значения по умолчанию.') + '</div>';
+        (bl.found ? '<br>Общие проценты: расходы <b>' + pct(bl.fotPct) + '</b>, фулфилмент <b>' + pct(bl.fulfillPct) + '</b>' : '<br>Проценты расходов не найдены, будут взяты значения по умолчанию.') + '</div>';
       var old = state.data.months[key];
       if (old) html += '<div style="margin-top:8px;color:var(--warn)">Расчёт за этот месяц уже есть: отчёты тех же кабинетов будут заменены, остальные останутся.</div>';
       go.textContent = old ? 'Обновить расчёт' : 'Создать расчёт';
@@ -708,7 +708,7 @@
     },
     'csv-month': function () {
       var key = state.sel, row = state.L.byKey[key]; if (!row || !row.calc) return;
-      var rows = [['Товар', 'Закуп руб/шт', 'Продано шт', 'Цена руб', 'Прибыль на ед руб', 'Выручка', 'Вал. прибыль', 'Фулфилмент', 'ФОТ и сервисы', 'Чистая прибыль']];
+      var rows = [['Товар', 'Закуп руб/шт', 'Продано шт', 'Цена руб', 'Прибыль на ед руб', 'Выручка', 'Вал. прибыль', 'Фулфилмент', 'Расходы', 'Чистая прибыль']];
       row.calc.products.forEach(function (p) { rows.push([p.product, p.cost == null ? '' : p.cost, p.sold, p.price, p.profitUnit, p.revenue, p.gross, p.fulfill, p.fot, p.net]); });
       var t = row.calc.totals; rows.push(['Итого', '', t.sold, '', '', t.revenue, t.gross, t.fulfill, t.fot, t.net]);
       download('расчет-' + key + '.csv', rows);

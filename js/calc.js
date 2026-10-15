@@ -13,6 +13,9 @@
   // Строки ОПиУ, которые входят в «ФОТ и сервисы», и строка «услуги фулфилмента»
   var FOT_LABELS = ['ФОТ', 'Внешняя логистика', 'Сервисы; Программное обеспечение', 'Сертификация и регистрация торговых марок'];
   var FULFILL_LABEL = 'Услуги Фулфилмента';
+  var LOAD_TOLERANCE = 0.25;
+  var NET_LABEL = 'Чистая прибыль';
+  var INTEREST_LABEL = 'Выплата процентов по кредитным обязательствам';
   var DEFAULT_SHARE = 1 / 3; // доля продаж, относящаяся к инвестору
 
   // Названия листов и столбцов в отчётах разных маркетплейсов
@@ -222,6 +225,16 @@
           var v = firstRow(function (x) { return x === norm(l); });
           if (v === undefined) notFound.push(l); else sum += v;
         });
+        // Значение со знаком (чистая прибыль может быть отрицательной)
+        var signed = function (test) {
+          for (var q2 = 0; q2 < op.length; q2++) {
+            var lab2 = op[q2] && op[q2][2];
+            if (typeof lab2 === 'string' && test(norm(lab2))) { var v2 = op[q2][vc]; return typeof v2 === 'number' ? v2 : 0; }
+          }
+          return undefined;
+        };
+        var netV = signed(function (x) { return x === norm(NET_LABEL); });
+        var intV = signed(function (x) { return x === norm(INTEREST_LABEL); });
         var f = firstRow(function (x) { return x === norm(FULFILL_LABEL); });
         if (f === undefined) notFound.push(FULFILL_LABEL);
         if (notFound.length) warnings.push('На листе «' + opName + '» не найдены строки: ' + notFound.join('; ') + '.');
@@ -229,6 +242,16 @@
           warnings.push('На листе «' + opName + '» нет «Реализация до СПП» за этот месяц — проценты нужно ввести вручную.');
         } else {
           amounts = { fot: sum, fulfill: f || 0, base: base };
+          // Полная нагрузка: всё, что отделяет валовую прибыль по артикулам от чистой прибыли ОПиУ,
+          // кроме процентов по кредитам (они не относятся к инвестору) и фулфилмента (считается отдельно)
+          if (netV !== undefined) {
+            var gross = articles.reduce(function (t, a2) { return t + a2.orgSales * a2.profitUnit; }, 0);
+            amounts.net = netV; amounts.interest = Math.abs(intV || 0); amounts.gross = gross;
+            // Страховка: если недели на листе артикулов не соответствуют месяцу, выручка по артикулам сильно разойдётся с ОПиУ
+            var artRev = articles.reduce(function (t, a3) { return t + a3.orgSales * a3.price; }, 0);
+            if (Math.abs(artRev / base - 1) <= LOAD_TOLERANCE) amounts.load = gross - netV - amounts.interest - (f || 0);
+            else warnings.push('Выручка по артикулам (' + Math.round(artRev) + ' ₽) расходится с ОПиУ (' + Math.round(base) + ' ₽) больше чем на ' + Math.round(LOAD_TOLERANCE * 100) + '%: проверьте недели на листе «' + artName + '». Расходы посчитаны только по ФОТ, логистике и сервисам.');
+          } else warnings.push('На листе «' + opName + '» не найдена строка «' + NET_LABEL + '» — расходы посчитаны по ФОТ, логистике и сервисам без налогов.');
           pctFound = true;
         }
       }
@@ -240,19 +263,22 @@
       marketplace: market, entity: entity, file: fileName || '',
       articles: articles,
       amounts: amounts, pctFound: pctFound,
-      fotPct: amounts ? amounts.fot / amounts.base : null,
+      fotPct: amounts ? (amounts.load !== undefined ? amounts.load : amounts.fot) / amounts.base : null,
       fulfillPct: amounts ? amounts.fulfill / amounts.base : null,
       warnings: warnings
     };
   }
 
-  // Общие проценты по нескольким отчётам: сумма расходов / сумма «Реализации до СПП»
+  // Общие проценты по нескольким отчётам: сумма расходов / сумма «Реализации до СПП».
+  // Если во всех отчётах есть чистая прибыль ОПиУ, берётся полная нагрузка (режим 'full'),
+  // иначе только ФОТ, логистика и сервисы (режим 'basic').
   function blendPct(sources) {
-    var fot = 0, ful = 0, base = 0, n = 0;
-    (sources || []).forEach(function (s) {
-      if (s.amounts && s.amounts.base > 0) { fot += s.amounts.fot; ful += s.amounts.fulfill; base += s.amounts.base; n++; }
-    });
-    return n ? { fotPct: fot / base, fulfillPct: ful / base, found: true, count: n } : { fotPct: null, fulfillPct: null, found: false, count: 0 };
+    var list = (sources || []).filter(function (s) { return s.amounts && s.amounts.base > 0; });
+    if (!list.length) return { fotPct: null, fulfillPct: null, found: false, count: 0, mode: 'basic' };
+    var full = list.every(function (s) { return s.amounts.load !== undefined; });
+    var fot = 0, ful = 0, base = 0;
+    list.forEach(function (s) { fot += full ? s.amounts.load : s.amounts.fot; ful += s.amounts.fulfill; base += s.amounts.base; });
+    return { fotPct: fot / base, fulfillPct: ful / base, found: true, count: list.length, mode: full ? 'full' : 'basic' };
   }
 
   /* ---------- Расчёт месяца ---------- */
