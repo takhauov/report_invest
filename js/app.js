@@ -569,7 +569,7 @@
     openDlg('<h2>Подключение</h2><form data-form="conn">' +
       '<div class="radio-row"><label class="check"><input type="radio" name="mode" value="github"' + (c.mode === 'github' ? ' checked' : '') + '>GitHub (общая база)</label><label class="check"><input type="radio" name="mode" value="local"' + (c.mode === 'local' ? ' checked' : '') + '>Локально (проба)</label></div>' +
       '<div class="form-row"><div><label for="cnOwner">Владелец репозитория</label><input id="cnOwner" name="owner" value="' + esc(c.owner) + '" autocomplete="off" placeholder="ваш-логин"></div>' +
-      '<div><label for="cnRepo">Репозиторий с данными</label><input id="cnRepo" name="repo" value="' + esc(c.repo) + '" autocomplete="off" placeholder="wb-investor-data"></div>' +
+      '<div><label for="cnRepo">Репозиторий с данными</label><input id="cnRepo" name="repo" value="' + esc(c.repo) + '" autocomplete="off" placeholder="investor-data"></div>' +
       '<div><label for="cnBranch">Ветка</label><input id="cnBranch" name="branch" value="' + esc(c.branch) + '" autocomplete="off"></div></div>' +
       '<div class="form-row"><div style="grid-column: span 2"><label for="cnToken">Токен доступа GitHub</label><input id="cnToken" name="token" type="password" value="' + esc(c.token) + '" autocomplete="off"></div>' +
       '<div><label for="cnRole">Роль на этом устройстве</label><select id="cnRole" name="role"><option value="owner"' + (c.role === 'owner' ? ' selected' : '') + '>Владелец</option><option value="investor"' + (c.role === 'investor' ? ' selected' : '') + '>Инвестор</option></select></div></div>' +
