@@ -288,7 +288,7 @@
 
   function monthSold(rec, mapping, availFn) {
     var out = {}, share = shareOf(rec);
-    groupByProduct(rec, mapping).groups.forEach(function (g) { out[g.product] = (availFn && !availFn(g.product)) ? 0 : soldOf(g.orgSales, share); });
+    groupByProduct(rec, mapping).groups.forEach(function (g) { var sold = soldOf(g.orgSales, share); out[g.product] = availFn ? Math.max(0, Math.min(sold, availFn(g.product))) : sold; });
     return out;
   }
 
@@ -297,11 +297,16 @@
     var gp = groupByProduct(rec, mapping), share = shareOf(rec);
     var fot = num(rec.fotPct), ful = num(rec.fulfillPct);
     var totals = { sold: 0, revenue: 0, gross: 0, fulfill: 0, fot: 0, net: 0, cogs: 0 };
-    var missingCost = [], noStock = [];
+    var missingCost = [], noStock = [], capped = [];
     var products = gp.groups.map(function (g) {
       var raw = soldOf(g.orgSales, share), sold = raw;
       // Продажи учитываются только по товарам, которые есть у инвестора в наличии
-      if (availFn && !availFn(g.product)) { sold = 0; if (raw > 0) noStock.push({ product: g.product, sold: raw }); }
+      // и не больше остатка на складе
+      if (availFn) {
+        var lim = Math.max(0, availFn(g.product));
+        if (lim <= 0) { sold = 0; if (raw > 0) noStock.push({ product: g.product, sold: raw }); }
+        else if (raw > lim) { sold = lim; capped.push({ product: g.product, raw: raw, sold: lim }); }
+      }
       // Средние по всем кабинетам и маркетплейсам, взвешенные по органическим продажам
       var price = g.w > 0 ? g.wPrice / g.w : g.fPrice;
       var pu = g.w > 0 ? g.wProfit / g.w : g.fProfit;
@@ -317,7 +322,7 @@
     });
     products.sort(function (a, b) { return b.revenue - a.revenue; });
     totals.avgProfit = totals.sold ? totals.gross / totals.sold : 0;
-    return { products: products, totals: totals, unmapped: gp.unmapped, missingCost: missingCost, noStock: noStock, share: share };
+    return { products: products, totals: totals, unmapped: gp.unmapped, missingCost: missingCost, noStock: noStock, capped: capped, share: share };
   }
 
   /* ---------- Партии, остатки, потери ---------- */
@@ -348,12 +353,12 @@
       availByKey[key] = {}; soldByKey[key] = {}; excludedByKey[key] = {};
       Object.keys(products).forEach(function (p) {
         var pool = sortBatches(batches.filter(function (b) { return b.product === p && b.status === 'склад' && b.month <= key; }));
-        var have = pool.reduce(function (t, b) { return t + rem[b.id]; }, 0) - (lossQ[p] || 0);
+        var have = Math.max(0, pool.reduce(function (t, b) { return t + rem[b.id]; }, 0) - (lossQ[p] || 0));
         var ok = have > 0;
-        availByKey[key][p] = ok;
-        var sold = ok ? (raw[p] || 0) : 0;
+        availByKey[key][p] = have;
+        var sold = Math.min(raw[p] || 0, have);
         soldByKey[key][p] = sold;
-        if (!ok && raw[p]) excludedByKey[key][p] = raw[p];
+        if (raw[p] > sold) excludedByKey[key][p] = raw[p] - sold;
         var need = sold + (lossQ[p] || 0);
         for (var i = 0; i < pool.length && need > 0; i++) {
           var take = Math.min(rem[pool[i].id], need);
@@ -414,7 +419,7 @@
     keys.forEach(function (key) {
       var rec = months[key];
       var av = stock.availByKey[key] || {};
-      var calc = rec ? computeMonth(rec, s.mapping, function (p) { return costOf(L.batches, p, key); }, function (p) { return !!av[p]; }) : null;
+      var calc = rec ? computeMonth(rec, s.mapping, function (p) { return costOf(L.batches, p, key); }, function (p) { return av[p] || 0; }) : null;
       var cogs = calc ? calc.totals.cogs : 0, net = calc ? calc.totals.net : 0;
 
       var purchaseLines = L.batches.filter(function (b) { return b.month === key && !b.opening; }).map(function (b) {
