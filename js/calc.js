@@ -286,20 +286,22 @@
   // Продано для инвестора = доля (по умолчанию 1/3) органических продаж, округлённая вверх
   function soldOf(orgSales, share) { return Math.ceil(orgSales * share - 1e-9); }
 
-  function monthSold(rec, mapping) {
+  function monthSold(rec, mapping, availFn) {
     var out = {}, share = shareOf(rec);
-    groupByProduct(rec, mapping).groups.forEach(function (g) { out[g.product] = soldOf(g.orgSales, share); });
+    groupByProduct(rec, mapping).groups.forEach(function (g) { out[g.product] = (availFn && !availFn(g.product)) ? 0 : soldOf(g.orgSales, share); });
     return out;
   }
 
   // costFn(product) -> себестоимость за шт или null, если неизвестна
-  function computeMonth(rec, mapping, costFn) {
+  function computeMonth(rec, mapping, costFn, availFn) {
     var gp = groupByProduct(rec, mapping), share = shareOf(rec);
     var fot = num(rec.fotPct), ful = num(rec.fulfillPct);
     var totals = { sold: 0, revenue: 0, gross: 0, fulfill: 0, fot: 0, net: 0, cogs: 0 };
-    var missingCost = [];
+    var missingCost = [], noStock = [];
     var products = gp.groups.map(function (g) {
-      var sold = soldOf(g.orgSales, share);
+      var raw = soldOf(g.orgSales, share), sold = raw;
+      // Продажи учитываются только по товарам, которые есть у инвестора в наличии
+      if (availFn && !availFn(g.product)) { sold = 0; if (raw > 0) noStock.push({ product: g.product, sold: raw }); }
       // Средние по всем кабинетам и маркетплейсам, взвешенные по органическим продажам
       var price = g.w > 0 ? g.wPrice / g.w : g.fPrice;
       var pu = g.w > 0 ? g.wProfit / g.w : g.fProfit;
@@ -315,7 +317,7 @@
     });
     products.sort(function (a, b) { return b.revenue - a.revenue; });
     totals.avgProfit = totals.sold ? totals.gross / totals.sold : 0;
-    return { products: products, totals: totals, unmapped: gp.unmapped, missingCost: missingCost, share: share };
+    return { products: products, totals: totals, unmapped: gp.unmapped, missingCost: missingCost, noStock: noStock, share: share };
   }
 
   /* ---------- Партии, остатки, потери ---------- */
@@ -330,23 +332,29 @@
     return c.length ? num(c[c.length - 1].cost) : null;
   }
 
-  // Списание проданного и потерянного по принципу FIFO со складских партий
+  // Списание проданного и потерянного по принципу FIFO со складских партий.
+  // Продажи месяца учитываются только по товарам, которые есть у инвестора на складе.
   function replayStock(data, upToKey) {
     var batches = data.ledger.batches, losses = data.ledger.losses, mapping = data.settings.mapping;
-    var rem = {}, short = {};
+    var rem = {}, short = {}, availByKey = {}, soldByKey = {}, excludedByKey = {};
     batches.forEach(function (b) { rem[b.id] = num(b.qty); });
     var keys = new Set(Object.keys(data.months).filter(function (k) { return k <= upToKey; }));
     losses.forEach(function (l) { if (l.month <= upToKey) keys.add(l.month); });
     Array.from(keys).sort().forEach(function (key) {
-      var demand = {};
-      if (data.months[key]) {
-        var s = monthSold(data.months[key], mapping);
-        Object.keys(s).forEach(function (p) { demand[p] = (demand[p] || 0) + s[p]; });
-      }
-      losses.forEach(function (l) { if (l.month === key) demand[l.product] = (demand[l.product] || 0) + num(l.qty); });
-      Object.keys(demand).forEach(function (p) {
-        var need = demand[p];
+      var raw = data.months[key] ? monthSold(data.months[key], mapping) : {};
+      var lossQ = {}, products = {};
+      Object.keys(raw).forEach(function (p) { products[p] = 1; });
+      losses.forEach(function (l) { if (l.month === key) { lossQ[l.product] = (lossQ[l.product] || 0) + num(l.qty); products[l.product] = 1; } });
+      availByKey[key] = {}; soldByKey[key] = {}; excludedByKey[key] = {};
+      Object.keys(products).forEach(function (p) {
         var pool = sortBatches(batches.filter(function (b) { return b.product === p && b.status === 'склад' && b.month <= key; }));
+        var have = pool.reduce(function (t, b) { return t + rem[b.id]; }, 0) - (lossQ[p] || 0);
+        var ok = have > 0;
+        availByKey[key][p] = ok;
+        var sold = ok ? (raw[p] || 0) : 0;
+        soldByKey[key][p] = sold;
+        if (!ok && raw[p]) excludedByKey[key][p] = raw[p];
+        var need = sold + (lossQ[p] || 0);
         for (var i = 0; i < pool.length && need > 0; i++) {
           var take = Math.min(rem[pool[i].id], need);
           rem[pool[i].id] -= take; need -= take;
@@ -354,7 +362,7 @@
         if (need > 0) short[p] = (short[p] || 0) + need;
       });
     });
-    return { rem: rem, short: short };
+    return { rem: rem, short: short, availByKey: availByKey, soldByKey: soldByKey, excludedByKey: excludedByKey };
   }
 
   // «Деньги в товаре» на конец месяца key
@@ -382,7 +390,7 @@
       if (b.month === key) get(b.product).incoming += num(b.qty);
       if (b.month <= key) get(b.product).close += now.rem[b.id] || 0;
     });
-    var sold = data.months[key] ? monthSold(data.months[key], mapping) : {};
+    var sold = now.soldByKey[key] || {};
     Object.keys(sold).forEach(function (p) { get(p).sold += sold[p]; });
     data.ledger.losses.forEach(function (l) { if (l.month === key) get(l.product).lost += num(l.qty); });
     Object.keys(now.short).forEach(function (p) { get(p).short = Math.max(0, now.short[p] - (prev.short[p] || 0)); });
@@ -402,10 +410,11 @@
     var keys = Array.from(set).filter(validKey).sort();
 
     var cash = num(s.openingBalance), cum = num(s.openingCumulative);
-    var byKey = {};
+    var byKey = {}, stock = replayStock(data, '9999-12');
     keys.forEach(function (key) {
       var rec = months[key];
-      var calc = rec ? computeMonth(rec, s.mapping, function (p) { return costOf(L.batches, p, key); }) : null;
+      var av = stock.availByKey[key] || {};
+      var calc = rec ? computeMonth(rec, s.mapping, function (p) { return costOf(L.batches, p, key); }, function (p) { return !!av[p]; }) : null;
       var cogs = calc ? calc.totals.cogs : 0, net = calc ? calc.totals.net : 0;
 
       var purchaseLines = L.batches.filter(function (b) { return b.month === key && !b.opening; }).map(function (b) {

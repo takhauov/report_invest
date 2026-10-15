@@ -219,6 +219,7 @@
     }
     var row = state.L.byKey[key], calc = row.calc, t = calc.totals, h = '';
 
+    if (calc.noStock && calc.noStock.length) h += '<div class="note warn"><b>Не учтены в продажах, нет в наличии у инвестора:</b> ' + calc.noStock.map(function (x) { return esc(x.product) + ' (по доле ' + fmt(x.sold) + ' шт)'; }).join(', ') + '. Продажи считаются только по товарам, которые есть на складе инвестора. Если товар был, проверьте закупки и статус «на складе».</div>';
     if (calc.missingCost.length) h += '<div class="note warn"><b>Нет себестоимости:</b> ' + calc.missingCost.map(esc).join(', ') + '. Пока она считается как 0 — добавьте закупку на вкладке «Товар инвестора», иначе движение денег будет занижено.</div>';
     if (!rec.pctFound) h += '<div class="note warn"><b>Проценты ФОТ и фулфилмента взяты не из отчётов</b> (нужный месяц не нашёлся на листе ОПиУ). Проверьте значения ниже и нажмите «Пересчитать».</div>';
     if (calc.unmapped.length) {
