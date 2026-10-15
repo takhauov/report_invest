@@ -28,23 +28,23 @@
 
 ### 1. Репозиторий для сайта
 
-1. На github.com нажмите **New repository**, назовите, например, `wb-investor-site`, выберите **Public**.
+1. На github.com нажмите **New repository**, назовите, например, `report_invest`, выберите **Public**.
 2. Загрузите в него все файлы из этой папки (**Add file → Upload files**): `index.html`, `README.md` и папки `js` и `css`.
 3. **Settings → Pages → Build and deployment**: Source = *Deploy from a branch*, Branch = `main`, папка `/ (root)` → **Save**.
-4. Через минуту-две сайт откроется по адресу `https://ВАШ-ЛОГИН.github.io/wb-investor-site/`.
+4. Через минуту-две сайт откроется по адресу `https://ВАШ-ЛОГИН.github.io/report_invest/`.
 
 Публичный репозиторий нужен потому, что Pages для приватных репозиториев доступны только на платных тарифах. В нём нет никаких данных, только код. Без токена сайт показывает пустой интерфейс.
 
 ### 2. Репозиторий для данных
 
-1. **New repository**, имя, например, `wb-investor-data`, выберите **Private**.
+1. **New repository**, имя, например, `investor-data`, выберите **Private**.
 2. Поставьте галочку **Add a README file**, иначе в репозитории не появится ветка `main`.
 
 ### 3. Токен доступа
 
 1. GitHub → ваш аватар → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
 2. Название, например `investor-site`; срок действия — на ваше усмотрение (можно год).
-3. **Repository access → Only select repositories** → выберите `wb-investor-data`.
+3. **Repository access → Only select repositories** → выберите `investor-data`.
 4. **Permissions → Repository permissions → Contents: Read and write**.
 5. **Generate token** и скопируйте его сразу, потом GitHub его не покажет.
 
@@ -53,7 +53,7 @@
 ### 4. Подключение сайта
 
 1. Откройте сайт → **Подключение**.
-2. Выберите *GitHub*, укажите логин владельца, `wb-investor-data`, ветку `main`, вставьте токен, выберите роль (вы — «Владелец», инвестор — «Инвестор»).
+2. Выберите *GitHub*, укажите логин владельца, `investor-data`, ветку `main`, вставьте токен, выберите роль (вы — «Владелец», инвестор — «Инвестор»).
 3. Нажмите **Проверить**, затем **Сохранить**. Подключение настраивается отдельно на каждом устройстве.
 
 ### 5. Первый запуск
