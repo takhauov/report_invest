@@ -371,6 +371,26 @@
     return { warehouse: wh, transit: tr, totalWarehouse: sum(wh), totalTransit: sum(tr), total: sum(wh) + sum(tr), short: st.short };
   }
 
+  // Движение остатков на складе за месяц, шт: было + закуплено − продано − потеряно = стало
+  function stockMovement(data, key) {
+    var batches = data.ledger.batches, mapping = data.settings.mapping, map = {};
+    var get = function (p) { return map[p] || (map[p] = { product: p, open: 0, incoming: 0, sold: 0, lost: 0, close: 0, short: 0 }); };
+    var now = replayStock(data, key), prev = replayStock(data, prevKey(key));
+    batches.forEach(function (b) {
+      if (b.status !== 'склад') return;
+      if (b.month <= prevKey(key)) get(b.product).open += prev.rem[b.id] || 0;
+      if (b.month === key) get(b.product).incoming += num(b.qty);
+      if (b.month <= key) get(b.product).close += now.rem[b.id] || 0;
+    });
+    var sold = data.months[key] ? monthSold(data.months[key], mapping) : {};
+    Object.keys(sold).forEach(function (p) { get(p).sold += sold[p]; });
+    data.ledger.losses.forEach(function (l) { if (l.month === key) get(l.product).lost += num(l.qty); });
+    Object.keys(now.short).forEach(function (p) { get(p).short = Math.max(0, now.short[p] - (prev.short[p] || 0)); });
+    return Object.keys(map).map(function (p) { return map[p]; }).filter(function (r) {
+      return r.open || r.incoming || r.sold || r.lost || r.close || r.short;
+    }).sort(function (a, b) { return a.product.localeCompare(b.product, 'ru'); });
+  }
+
   /* ---------- Движение денежных средств ---------- */
   function buildLedger(data) {
     var s = data.settings, L = data.ledger, flows = data.flows || {}, months = data.months;
@@ -420,6 +440,6 @@
     norm: norm, num: num, validKey: validKey, prevKey: prevKey, monthLabel: monthLabel, parseShare: parseShare, formatShare: formatShare,
     neededSheets: neededSheets, parseReport: parseReport, blendPct: blendPct, recSources: recSources, shareOf: shareOf,
     groupByProduct: groupByProduct, monthSold: monthSold, computeMonth: computeMonth,
-    sortBatches: sortBatches, costOf: costOf, replayStock: replayStock, moneyInGoods: moneyInGoods, buildLedger: buildLedger
+    sortBatches: sortBatches, costOf: costOf, replayStock: replayStock, moneyInGoods: moneyInGoods, stockMovement: stockMovement, buildLedger: buildLedger
   };
 });

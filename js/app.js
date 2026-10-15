@@ -164,8 +164,10 @@
     renderHeader();
     renderTabs();
     renderToolbar();
+    var ae = document.activeElement, keep = ae && ae.getAttribute && ae.hasAttribute('data-cell') ? [ae.getAttribute('data-key'), ae.getAttribute('data-field')] : null;
     var v = state.tab === 'goods' ? viewGoods() : state.tab === 'cash' ? viewCash() : state.tab === 'dir' ? viewDir() : viewMonth();
     $('#view').innerHTML = (state.loadError ? '<div class="note err"><b>Данные не загружены.</b> ' + esc(state.loadError) + ' Редактирование отключено, чтобы не затереть сохранённое. Проверьте «Подключение» и нажмите «Обновить».</div>' : '') + v;
+    if (keep) { var nf = document.querySelector('[data-cell][data-key="' + keep[0] + '"][data-field="' + keep[1] + '"]'); if (nf && !nf.disabled) nf.focus(); }
   }
 
   function renderHeader() {
@@ -303,6 +305,15 @@
       '<tr class="total"><td>ИТОГО</td><td></td><td></td><td></td><td>' + fmt(mg.total) + '</td><td></td><td></td></tr></tbody></table></div>' +
       '<p class="hint">Остаток считается по порядку закупок: сначала списываются самые ранние партии. Товар «в пути» в продажи не попадает, пока вы не переведёте его «на склад».</p></div>';
 
+    // Движение остатков за месяц: проданное списывается автоматически
+    var mv = C.stockMovement(d, key);
+    h += '<div class="card"><h2>Движение остатков, шт · ' + esc(C.monthLabel(key)) + '</h2>' +
+      (mv.length ? '<div class="tbl-wrap"><table><thead><tr><th>Товар</th><th>Было</th><th>Закуплено</th><th>Продано</th><th>Потеряно</th><th>Осталось</th></tr></thead><tbody>' +
+        mv.map(function (r) {
+          return '<tr><td>' + esc(r.product) + '</td><td>' + fmt(r.open) + '</td><td>' + (r.incoming ? '+' + fmt(r.incoming) : '0') + '</td><td>' + (r.sold ? '−' + fmt(r.sold) : '0') + '</td><td>' + (r.lost ? '−' + fmt(r.lost) : '0') + '</td><td><b>' + fmt(r.close) + '</b>' + (r.short ? ' <span class="neg" title="Не хватило товара на складе">(не хватает ' + fmt(r.short) + ')</span>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<p class="hint">За этот месяц движения товара нет.</p>') +
+      '<p class="hint">Проданное количество берётся из расчёта месяца и списывается со склада автоматически (сначала самые ранние партии). Потери списываются так же. Товар «в пути» не считается остатком на складе.</p></div>';
+
     // Закупка
     h += '<div class="card"><h2>Новая закупка</h2><form data-form="purchase"><div class="form-row" style="margin-top:0">' +
       '<div><label for="pName">Товар</label><input id="pName" name="product" list="productsList" required autocomplete="off"' + dis() + '></div>' +
@@ -353,52 +364,117 @@
     return h;
   }
 
-  /* ---------- Вкладка 3: движение денежных средств ---------- */
+  /* ---------- Вкладка 3: движение денежных средств (таблица) ---------- */
+  var cashOpen = {}, extraMonths = [];
+
+  function cashKeys() {
+    var s = new Set(state.L.keys);
+    extraMonths.forEach(function (k) { s.add(k); });
+    if (state.sel) s.add(state.sel);
+    return Array.from(s).filter(C.validKey).sort();
+  }
+
+  // Подстроки (разбивка по товарам) для раскрывающихся статей
+  function cashDetails(id, keys) {
+    var L = state.L, order = [], cells = {};
+    var put = function (label, k, v) {
+      if (!cells[label]) { cells[label] = {}; order.push(label); }
+      cells[label][k] = (cells[label][k] || 0) + v;
+    };
+    keys.forEach(function (k) {
+      var r = L.byKey[k]; if (!r) return;
+      if (id === 'cogs' && r.calc) r.calc.products.forEach(function (p) { if (p.cogs) put(p.product + ', ' + fmt(p.sold) + ' шт', k, p.cogs); });
+      if (id === 'net' && r.calc) r.calc.products.forEach(function (p) { put(p.product, k, p.net); });
+      if (id === 'loss') r.lossLines.forEach(function (x) { put(x.loss.product + (x.loss.comment ? ' (' + x.loss.comment + ')' : ''), k, -x.value); });
+      if (id === 'buy') r.purchaseLines.forEach(function (x) { put(x.batch.product + (x.batch.status === 'путь' ? ' (в пути)' : ''), k, -x.value); });
+      if (id === 'corr') r.corrLines.forEach(function (c) { put(c.kind === 'batch' ? 'Корректировка закупа: ' + c.product : (c.comment || 'Корректировка'), k, c.amount); });
+    });
+    return order.map(function (label) { return { label: label, cells: cells[label] }; });
+  }
+
+  function cashRows() {
+    return [
+      { id: 'start', label: 'Входящий остаток (сальдо)', get: function (r) { return r.start; }, cls: 'main' },
+      { id: 'cogs', label: 'Проданный товар (себестоимость)', get: function (r) { return r.cogs; }, signed: true, detail: true },
+      { id: 'net', label: 'Чистая прибыль', get: function (r) { return r.net; }, signed: true, detail: true },
+      { id: 'loss', label: 'Сгоревший товар', get: function (r) { return -r.lossValue; }, signed: true, detail: true },
+      { id: 'buy', label: 'Новые закупки товара', get: function (r) { return -r.purchases; }, signed: true, detail: true },
+      { id: 'corr', label: 'Корректировки стоимости закупок', get: function (r) { return r.corrSum; }, signed: true, detail: true },
+      { id: 'in', label: 'Внесение денежных средств', edit: 'in' },
+      { id: 'out', label: 'Вывод денежных средств', edit: 'out' },
+      { id: 'end', label: 'Исходящий остаток (сальдо)', get: function (r) { return r.end; }, cls: 'end' },
+      { id: 'cum', label: 'Чистая прибыль накопленным итогом', get: function (r) { return r.cumProfit; }, signed: true, cls: 'cum' }
+    ];
+  }
+
   function viewCash() {
-    var key = state.sel || todayKey(), L = state.L, row = L.byKey[key], f = state.data.flows[key] || {};
-    var h = '';
-    if (!L.keys.length) h += '<div class="note info">Данных пока нет. Владелец создаёт расчёт и вносит закупки, инвестор может отмечать внесение и вывод средств.</div>';
+    var key = state.sel || todayKey(), L = state.L, row = L.byKey[key], keys = cashKeys(), h = '';
+    if (!L.keys.length && !extraMonths.length) h += '<div class="note info">Данных пока нет. Владелец создаёт расчёт и вносит закупки; внесение и вывод средств может отмечать и инвестор. Всё остальное в таблице считается само.</div>';
 
     if (row) {
       h += '<section class="bento">' +
         kpi('Исходящее сальдо', rub(row.end), sgn(row.end), 'wide', 'на конец ' + esc(C.monthLabel(key)).toLowerCase()) +
         kpi('Входящее сальдо', rub(row.start), sgn(row.start)) +
-        kpi('Прибыль накопленным итогом', rub(row.cumProfit), sgn(row.cumProfit)) + '</section>';
-
-      var line = function (cls, label, amount, signed) { return '<div class="r ' + cls + '"><span class="l">' + label + '</span><span class="a ' + (signed ? sgn(amount) : '') + '">' + (amount > 0 && signed ? '+' : '') + fmt(amount) + '</span></div>'; };
-      var st = line('main', 'Входящий остаток (сальдо)', row.start, false);
-      st += line('main', 'Проданный товар (себестоимость)', row.cogs, true);
-      st += line('main', 'Чистая прибыль', row.net, true);
-      st += line('main', 'Товара сгорело', -row.lossValue, true);
-      row.lossLines.forEach(function (x) { st += line('sub', esc(x.loss.product) + ', ' + fmt(x.loss.qty) + ' шт', -x.value, false); });
-      st += line('main', 'Закупки товара', -row.purchases, true);
-      row.purchaseLines.forEach(function (x) { st += line('sub', 'Закуп ' + esc(x.batch.product) + ' ' + fmt(x.batch.qty) + ' шт' + (x.batch.status === 'путь' ? ' (в пути)' : ''), -x.value, false); });
-      st += line('main', 'Корректировки закупа', row.corrSum, true);
-      row.corrLines.forEach(function (c) { st += line('sub', c.kind === 'batch' ? 'Корректировка закупа ' + esc(c.product) : esc(c.comment || 'Корректировка'), c.amount, false); });
-      st += line('main', 'Внесение денежных средств', row.inflow, true);
-      st += line('main', 'Вывод денежных средств', -row.outflow, true);
-      st += line('end', 'Исходящий остаток (сальдо)', row.end, false);
-      h += '<div class="grid-2"><div class="card"><h2>Движение денежных средств · ' + esc(C.monthLabel(key)) + '</h2><div class="stmt">' + st + '</div></div>';
-    } else {
-      h += '<div class="grid-2"><div class="card"><h2>' + esc(C.monthLabel(key)) + '</h2><p class="hint">За этот месяц пока нет данных. Вы можете сразу внести движение средств — оно попадёт в расчёт.</p></div>';
+        kpi('Чистая прибыль накопленным итогом', rub(row.cumProfit), sgn(row.cumProfit)) + '</section>';
     }
 
-    h += '<div class="card"><h2>Средства инвестора · ' + esc(C.monthLabel(key)) + '</h2><form data-form="flow">' +
-      '<div class="stack"><div><label for="fIn">Внесение денежных средств, ₽</label><input id="fIn" name="in" type="number" step="0.01" min="0" value="' + (f.in || 0) + '"' + (canFlow() ? '' : ' disabled') + '></div>' +
-      '<div><label for="fOut">Вывод денежных средств, ₽</label><input id="fOut" name="out" type="number" step="0.01" min="0" value="' + (f.out || 0) + '"' + (canFlow() ? '' : ' disabled') + '></div>' +
-      '<button class="btn" type="submit"' + (canFlow() ? '' : ' disabled') + '>Сохранить</button></div></form>' +
-      '<p class="hint">Вводите суммы положительными числами. Эти два поля может менять и инвестор.</p></div></div>';
+    var editable = canFlow();
+    var th = keys.map(function (k) {
+      return '<th class="m' + (k === key ? ' cur' : '') + '" scope="col"><button type="button" class="mh" data-act="cash-sel" data-key="' + k + '" title="Выбрать месяц">' + esc(C.monthLabel(k)) + '</button></th>';
+    }).join('');
+    var body = '';
 
-    // История и график
+    cashRows().forEach(function (def) {
+      var open = !!cashOpen[def.id];
+      var lab = def.detail
+        ? '<button type="button" class="tg" data-act="cash-toggle" data-row="' + def.id + '" aria-expanded="' + open + '" aria-label="Показать разбивку: ' + esc(def.label) + '"><span class="car">' + (open ? '▾' : '▸') + '</span>' + esc(def.label) + '</button>'
+        : esc(def.label);
+      body += '<tr class="rw ' + (def.cls || '') + (def.edit ? ' editrow' : '') + '"><th scope="row">' + lab + '</th>';
+      keys.forEach(function (k) {
+        var r = L.byKey[k], cur = k === key ? ' cur' : '';
+        if (def.edit) {
+          var f = state.data.flows[k] || {}, v = f[def.edit] || 0;
+          body += '<td class="c ed' + cur + '"><input class="cell" type="number" step="0.01" min="0" inputmode="decimal" data-cell="1" data-change="cell-flow" data-key="' + k + '" data-field="' + def.edit + '" value="' + (v || '') + '" placeholder="0" aria-label="' + esc(def.label) + ', ' + esc(C.monthLabel(k)) + '"' + (editable ? '' : ' disabled') + '></td>';
+        } else if (!r) body += '<td class="c empty' + cur + '">—</td>';
+        else {
+          var val = def.get(r);
+          body += '<td class="c' + cur + ' ' + (def.signed ? sgn(val) : '') + '">' + fmt(val) + '</td>';
+        }
+      });
+      body += '</tr>';
+      if (def.detail && open) {
+        var det = cashDetails(def.id, keys);
+        if (!det.length) body += '<tr class="rw sub"><th scope="row">нет данных</th>' + keys.map(function () { return '<td class="c"></td>'; }).join('') + '</tr>';
+        det.forEach(function (d) {
+          body += '<tr class="rw sub"><th scope="row">' + esc(d.label) + '</th>' + keys.map(function (k) {
+            var v = d.cells[k];
+            return '<td class="c' + (k === key ? ' cur' : '') + '">' + (v == null ? '' : fmt(v)) + '</td>';
+          }).join('') + '</tr>';
+        });
+      }
+    });
+
+    // Деньги в товаре: справочно
+    body += '<tr class="rw sect"><th scope="row" colspan="' + (keys.length + 1) + '">Товар инвестора на конец месяца (после автоматического списания проданного)</th></tr>';
+    var mgs = {};
+    keys.forEach(function (k) { mgs[k] = C.moneyInGoods(state.data, k); });
+    [['На складе', 'totalWarehouse'], ['В пути', 'totalTransit'], ['Всего деньги в товаре', 'total']].forEach(function (p, i) {
+      body += '<tr class="rw info' + (i === 2 ? ' main' : '') + '"><th scope="row">' + p[0] + '</th>' + keys.map(function (k) {
+        return '<td class="c' + (k === key ? ' cur' : '') + '">' + (L.byKey[k] || state.data.ledger.batches.length ? fmt(mgs[k][p[1]]) : '—') + '</td>';
+      }).join('') + '</tr>';
+    });
+
+    h += '<div class="card sheet-card"><div class="toolbar no-print" style="margin:0 0 12px"><h2 style="margin:0">Движение денежных средств</h2><div class="grow"></div>' +
+      '<label class="sr" for="addMonth">Добавить месяц</label><input id="addMonth" type="month" style="width:auto">' +
+      '<button class="btn ghost sm" type="button" data-act="cash-addmonth">Добавить месяц</button>' +
+      '<button class="btn ghost sm" type="button" data-act="csv-cash">' + ICON_DL + 'CSV</button>' +
+      '<button class="btn ghost sm" type="button" data-act="print">Печать / PDF</button></div>' +
+      '<div class="sheet-wrap" tabindex="0" role="region" aria-label="Таблица движения денежных средств по месяцам"><table class="sheet"><thead><tr><th class="corner" scope="col">Статья, ₽</th>' + th + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '<p class="hint">Всё считается автоматически: проданный товар (по последней известной себестоимости), чистая прибыль из расчёта месяца, закупки, потери и корректировки с вкладки «Товар инвестора», входящий остаток из прошлого месяца. Вручную меняются только две выделенные строки — внесение и вывод (положительными числами); их может править и инвестор. Нажмите ▸ у статьи, чтобы увидеть разбивку по товарам.' + (editable ? '' : ' <b>Сейчас таблица только для просмотра.</b>') + '</p></div>';
+
     if (L.keys.length) {
       h += '<div class="card"><h2>Динамика по месяцам</h2>' + chart(L) +
-        '<div class="legend"><span><i style="border-color:var(--accent)"></i>Исходящее сальдо</span><span><i style="border-color:var(--info);border-top-style:dashed"></i>Прибыль накопленным итогом</span></div>' +
-        '<div class="tbl-wrap" style="margin-top:16px"><table><thead><tr><th>Месяц</th><th>Входящее</th><th>Чистая прибыль</th><th>Внесение</th><th>Вывод</th><th>Исходящее</th><th>Прибыль накоп.</th></tr></thead><tbody>' +
-        L.keys.slice().reverse().map(function (k) {
-          var r = L.byKey[k];
-          return '<tr><td>' + esc(C.monthLabel(k)) + '</td><td>' + fmt(r.start) + '</td><td class="' + sgn(r.net) + '">' + fmt(r.net) + '</td><td>' + fmt(r.inflow) + '</td><td>' + fmt(r.outflow) + '</td><td>' + fmt(r.end) + '</td><td class="' + sgn(r.cumProfit) + '">' + fmt(r.cumProfit) + '</td></tr>';
-        }).join('') + '</tbody></table></div>' +
-        '<div class="toolbar no-print" style="margin:16px 0 0"><button class="btn ghost sm" type="button" data-act="csv-cash">' + ICON_DL + 'CSV</button><button class="btn ghost sm" type="button" data-act="print">Печать / PDF</button></div></div>';
+        '<div class="legend"><span><i style="border-color:var(--accent)"></i>Исходящее сальдо</span><span><i style="border-color:var(--info);border-top-style:dashed"></i>Чистая прибыль накопленным итогом</span></div></div>';
     }
     return h;
   }
@@ -631,9 +707,23 @@
       download('расчет-' + key + '.csv', rows);
     },
     'csv-cash': function () {
-      var L = state.L, rows = [['Месяц', 'Входящее сальдо', 'Проданный товар (себестоимость)', 'Чистая прибыль', 'Товара сгорело', 'Закупки', 'Корректировки', 'Внесение', 'Вывод', 'Исходящее сальдо', 'Прибыль накопленным итогом']];
-      L.keys.forEach(function (k) { var r = L.byKey[k]; rows.push([k, r.start, r.cogs, r.net, -r.lossValue, -r.purchases, r.corrSum, r.inflow, -r.outflow, r.end, r.cumProfit]); });
+      var L = state.L, keys = cashKeys(), rows = [['Статья'].concat(keys)];
+      cashRows().forEach(function (def) {
+        rows.push([def.label].concat(keys.map(function (k) {
+          if (def.edit) { var f = state.data.flows[k] || {}; return def.edit === 'out' ? -(f.out || 0) : (f.in || 0); }
+          return L.byKey[k] ? def.get(L.byKey[k]) : '';
+        })));
+      });
       download('движение-денег.csv', rows);
+    },
+    'cash-toggle': function (el) { var id = el.getAttribute('data-row'); cashOpen[id] = !cashOpen[id]; render(); var b = document.querySelector('[data-act="cash-toggle"][data-row="' + id + '"]'); if (b) b.focus(); },
+    'cash-sel': function (el) { var k = el.getAttribute('data-key'); if (!C.validKey(k)) return; state.sel = k; try { localStorage.setItem(SEL_KEY, k); } catch (e) { /* ничего */ } render(); },
+    'cash-addmonth': function () {
+      var v = ($('#addMonth') || {}).value;
+      if (!C.validKey(v)) return toast('Выберите месяц', 'err');
+      if (extraMonths.indexOf(v) < 0) extraMonths.push(v);
+      state.sel = v; render();
+      var c = document.querySelector('[data-cell][data-key="' + v + '"][data-field="in"]'); if (c && !c.disabled) c.focus();
     },
     'del-batch': function (el) {
       var id = el.getAttribute('data-id'), L = state.data.ledger;
@@ -675,6 +765,19 @@
     selInput: function (el) { if (C.validKey(el.value)) CHG.sel(el); },
     'create-month': function () { reparse(); },
     'create-file': function (el) { if (el.files && el.files.length) readReports(el.files); },
+    'cell-flow': function (el) {
+      if (!canFlow()) return;
+      var key = el.getAttribute('data-key'), field = el.getAttribute('data-field') === 'out' ? 'out' : 'in', val = C.num(el.value);
+      var cur = (state.data.flows[key] || {})[field] || 0;
+      if (val < 0) { toast('Суммы вводятся положительными числами', 'err'); render(); return; }
+      if (Math.abs(val - cur) < 1e-9) return;
+      var who = state.cfg.role === 'owner' ? 'владелец' : 'инвестор';
+      mutate(function (d) {
+        var f = Object.assign({ in: 0, out: 0 }, d.flows[key] || {});
+        f[field] = val; f.by = who; f.at = Date.now();
+        if (!f.in && !f.out) delete d.flows[key]; else d.flows[key] = f;
+      }, [['flow', key]], 'Сохранено: ' + (field === 'out' ? 'вывод' : 'внесение') + ' за ' + C.monthLabel(key), (field === 'out' ? 'Вывод средств ' : 'Внесение средств ') + key + ' (' + who + ')');
+    },
     'batch-status': function (el) {
       if (!isOwner()) return;
       var id = el.getAttribute('data-id'), val = el.value === 'путь' ? 'путь' : 'склад';
@@ -800,6 +903,18 @@
     if (!f) return;
     e.preventDefault();
     if (FORM[f.getAttribute('data-form')]) FORM[f.getAttribute('data-form')](f);
+  });
+  document.addEventListener('keydown', function (e) {
+    var el = e.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute('data-cell')) return;
+    if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    var k = el.getAttribute('data-key'), f = el.getAttribute('data-field');
+    var tf = e.key === 'ArrowUp' ? (f === 'out' ? 'in' : 'in') : 'out';
+    if (e.key === 'Enter' && f === 'out') tf = 'in';
+    var next = document.querySelector('[data-cell][data-key="' + k + '"][data-field="' + tf + '"]');
+    if (e.key === 'Enter' && f === 'out') { var cols = Array.from(document.querySelectorAll('[data-cell][data-field="in"]')), i = cols.findIndex(function (x) { return x.getAttribute('data-key') === k; }); next = cols[i + 1] || null; }
+    if (next && !next.disabled) { next.focus(); next.select && next.select(); } else el.blur();
   });
   $('#btnSettings').addEventListener('click', openConn);
   $('#btnReload').addEventListener('click', async function () { await boot(); toast('Данные обновлены', 'ok'); });
