@@ -79,7 +79,33 @@
     }
   }
 
+  var NOLOGIN_KEY = 'wbinv.nologin';
+  async function fetchAccess() {
+    if (typeof fetch !== 'function' || typeof Access === 'undefined') return null;
+    try {
+      var r = await fetch('access.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return null;
+      var j = await r.json();
+      return j && j.v === 1 && j.ct ? j : null;
+    } catch (e) { return null; }
+  }
+  function openLogin(msg) {
+    openDlg('<h2>Вход</h2><form data-form="login">' +
+      '<div class="form-row"><div><label for="lgUser">Логин</label><input id="lgUser" name="login" autocomplete="username" autocapitalize="none" required></div>' +
+      '<div><label for="lgPass">Пароль</label><input id="lgPass" name="password" type="password" autocomplete="current-password" required></div></div>' +
+      '<div id="lgMsg" class="hint" role="status">' + (msg ? '<span class="neg">' + esc(msg) + '</span>' : '') + '</div>' +
+      '<div class="dlg-actions"><button type="button" class="btn ghost" data-act="login-manual">Я владелец — подключить вручную</button><button type="submit" class="btn">Войти</button></div></form>');
+    var u = $('#lgUser'); if (u) u.focus();
+  }
+
   async function boot() {
+    if (state.cfg.mode !== 'github' || !state.cfg.token) {
+      var skip = false; try { skip = localStorage.getItem(NOLOGIN_KEY) === '1'; } catch (e) { skip = false; }
+      if (!skip) {
+        state.access = await fetchAccess();
+        if (state.access) openLogin();
+      }
+    }
     state.store = makeStore(state.cfg);
     try { state.sel = localStorage.getItem(SEL_KEY) || ''; } catch (e) { state.sel = ''; }
     $('#view').innerHTML = '<div class="empty">Загружаю данные…</div>';
@@ -176,6 +202,7 @@
     else if (state.store.kind === 'github') { dot.className = 'dot ok'; txt.textContent = 'GitHub: ' + c.owner + '/' + c.repo; }
     else { dot.className = 'dot warn'; txt.textContent = 'Локальный режим (только этот браузер)'; }
     $('#rolePill').textContent = c.role === 'owner' ? 'Роль: владелец' : 'Роль: инвестор';
+    var lo = $('#btnLogout'); if (lo) lo.hidden = !(c.mode === 'github' && c.role === 'investor');
   }
 
   function renderTabs() {
@@ -536,6 +563,18 @@
       '<div class="toolbar" style="margin:0"><button class="btn" type="button" data-act="backup-dl">Скачать резервную копию</button>' +
       (isOwner() ? '<label class="btn ghost" for="backupFile" style="cursor:pointer">Восстановить из файла</label><input id="backupFile" type="file" accept=".json,application/json" class="sr" data-change="backup-file">' : '') + '</div>' +
       (isOwner() ? '<p class="hint">Восстановление добавляет и заменяет записи из файла, но ничего не удаляет. Перед ним лучше скачать свежую копию.</p>' : '') + '</div>';
+    if (isOwner()) {
+      h += '<div class="card"><h2>Доступ для инвестора (логин и пароль)</h2>' +
+        '<p class="hint" style="margin-top:0">Инвестор заходит на сайт по логину и паролю, GitHub ему не нужен. Создайте для него отдельный токен (только репозиторий с данными, право Contents: Read and write), введите его ниже вместе с логином и паролем — сайт зашифрует подключение паролем и выдаст файл access.json. Загрузите его в корень репозитория сайта (Add file → Upload files). Пароль и токен на сайте не сохраняются.</p>' +
+        '<form data-form="access"><div class="form-row" style="margin-top:0">' +
+        '<div><label for="acLogin">Логин инвестора</label><input id="acLogin" name="login" autocomplete="off" required></div>' +
+        '<div><label for="acPass">Пароль (от 8 символов)</label><input id="acPass" name="password" type="password" autocomplete="new-password" minlength="8" required></div>' +
+        '<div><label for="acOwner">Владелец репозитория данных</label><input id="acOwner" name="owner" value="' + esc(state.cfg.owner) + '" autocomplete="off" required></div>' +
+        '<div><label for="acRepo">Репозиторий данных</label><input id="acRepo" name="repo" value="' + esc(state.cfg.repo || 'investor-data') + '" autocomplete="off" required></div>' +
+        '<div style="grid-column: span 2"><label for="acToken">Токен инвестора</label><input id="acToken" name="token" type="password" autocomplete="off" required></div>' +
+        '<div><button class="btn" type="submit">Создать access.json</button></div></div></form>' +
+        '<p class="hint">Чтобы сменить пароль или токен, создайте файл заново и загрузите поверх старого. Используйте длинный пароль: файл лежит на публичном сайте, и слабый пароль можно подобрать. Токен выдавайте с коротким сроком и обновляйте.</p></div>';
+    }
     h += '<div class="card"><h2>Параметры</h2><form data-form="settings"><div class="form-row" style="margin-top:0">' +
       '<div><label for="sShare">Доля продаж инвестора</label><input id="sShare" name="investorShare" type="text" value="' + esc(C.formatShare(C.shareOf({ share: s.investorShare }))) + '" placeholder="1/3"' + dis() + '></div>' +
       '<div><label for="sOpen">Входящее сальдо первого месяца, ₽</label><input id="sOpen" name="openingBalance" type="number" step="0.01" value="' + s.openingBalance + '"' + dis() + '></div>' +
@@ -729,6 +768,7 @@
       a.href = URL.createObjectURL(blob); a.download = 'investor-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     },
+    'login-manual': function () { try { localStorage.setItem(NOLOGIN_KEY, '1'); } catch (e) { /* ничего */ } closeDlg(); openConn(); },
     'cash-toggle': function (el) { var id = el.getAttribute('data-row'); cashOpen[id] = !cashOpen[id]; render(); var b = document.querySelector('[data-act="cash-toggle"][data-row="' + id + '"]'); if (b) b.focus(); },
     'cash-sel': function (el) { var k = el.getAttribute('data-key'); if (!C.validKey(k)) return; state.sel = k; try { localStorage.setItem(SEL_KEY, k); } catch (e) { /* ничего */ } render(); },
     'cash-addmonth': function () {
@@ -912,6 +952,31 @@
         d.settings.defaultFulfillPct = C.num(fd.get('defaultFulfillPct')) / 100;
       }, ['settings'], 'Параметры сохранены', 'Параметры расчёта');
     },
+    login: async function (f) {
+      var fd = new FormData(f), msg = $('#lgMsg');
+      if (msg) msg.textContent = 'Проверяю…';
+      try {
+        var p = await Access.open(fd.get('login'), fd.get('password'), state.access);
+        if (!p || !p.owner || !p.repo || !p.token) throw new Error('Файл доступа заполнен не полностью.');
+        state.cfg = { mode: 'github', owner: p.owner, repo: p.repo, branch: p.branch || 'main', role: 'investor', remember: true, token: p.token };
+        saveCfg(state.cfg); closeDlg(); boot();
+      } catch (e) { if (msg) msg.innerHTML = '<span class="neg">' + esc(e.message || e) + '</span>'; }
+    },
+    access: async function (f) {
+      var fd = new FormData(f), btn = f.querySelector('button[type="submit"]');
+      var token = String(fd.get('token') || '').trim(), owner = String(fd.get('owner') || '').trim(), repo = String(fd.get('repo') || '').trim();
+      if (btn) btn.disabled = true;
+      try {
+        var blob = await Access.seal(fd.get('login'), fd.get('password'), { owner: owner, repo: repo, branch: state.cfg.branch || 'main', token: token });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(blob)], { type: 'application/json' }));
+        a.download = 'access.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        f.reset();
+        toast('Файл access.json скачан. Загрузите его в корень репозитория сайта.', 'ok');
+      } catch (e) { toast(e.message || String(e), 'err'); }
+      finally { if (btn) btn.disabled = false; }
+    },
     conn: function (f) {
       var v = connValues(f);
       if (v.mode === 'github' && (!v.owner || !v.repo || !v.token)) { $('#connMsg').innerHTML = '<span class="neg">Для GitHub нужны владелец, репозиторий и токен.</span>'; return; }
@@ -949,6 +1014,12 @@
     if (next && !next.disabled) { next.focus(); next.select && next.select(); } else el.blur();
   });
   $('#btnSettings').addEventListener('click', openConn);
+  $('#btnLogout').addEventListener('click', function () {
+    state.cfg = { mode: 'local', owner: '', repo: '', branch: 'main', role: 'owner', remember: true, token: '' };
+    saveCfg(state.cfg);
+    try { localStorage.removeItem(NOLOGIN_KEY); } catch (e) { /* ничего */ }
+    boot();
+  });
   $('#btnReload').addEventListener('click', async function () { await boot(); toast('Данные обновлены', 'ok'); });
   $('#tabs').addEventListener('keydown', function (e) {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
