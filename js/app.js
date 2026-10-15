@@ -529,6 +529,10 @@
         return '<button class="chip" type="button" data-act="map-chip" data-art="' + esc(a.article) + '"' + dis() + '>' + esc(a.article) + ' · ' + esc(C.MARKET_LABEL[a.marketplace] || '') + ' · ' + fmt(a.orgSales) + '</button>';
       }).join('') + '</div><p class="hint">Нажмите на артикул, чтобы добавить его в таблицу выше, затем укажите товар и сохраните.</p>' : '') + '</div>';
 
+    h += '<div class="card"><h2>Резервная копия</h2><p class="hint" style="margin-top:0">Все данные (настройки, закупки, потери, корректировки, движение средств и расчёты всех месяцев) одним файлом. Храните копию вне GitHub: на компьютере или в облачном диске. Сделайте её после закрытия каждого месяца.</p>' +
+      '<div class="toolbar" style="margin:0"><button class="btn" type="button" data-act="backup-dl">Скачать резервную копию</button>' +
+      (isOwner() ? '<label class="btn ghost" for="backupFile" style="cursor:pointer">Восстановить из файла</label><input id="backupFile" type="file" accept=".json,application/json" class="sr" data-change="backup-file">' : '') + '</div>' +
+      (isOwner() ? '<p class="hint">Восстановление добавляет и заменяет записи из файла, но ничего не удаляет. Перед ним лучше скачать свежую копию.</p>' : '') + '</div>';
     h += '<div class="card"><h2>Параметры</h2><form data-form="settings"><div class="form-row" style="margin-top:0">' +
       '<div><label for="sShare">Доля продаж инвестора</label><input id="sShare" name="investorShare" type="text" value="' + esc(C.formatShare(C.shareOf({ share: s.investorShare }))) + '" placeholder="1/3"' + dis() + '></div>' +
       '<div><label for="sOpen">Входящее сальдо первого месяца, ₽</label><input id="sOpen" name="openingBalance" type="number" step="0.01" value="' + s.openingBalance + '"' + dis() + '></div>' +
@@ -716,6 +720,12 @@
       });
       download('движение-денег.csv', rows);
     },
+    'backup-dl': function () {
+      var d = state.data, snap = { app: 'investor-calc', version: 1, exportedAt: new Date().toISOString(), settings: d.settings, ledger: d.ledger, flows: d.flows, months: d.months };
+      var blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' }), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'investor-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    },
     'cash-toggle': function (el) { var id = el.getAttribute('data-row'); cashOpen[id] = !cashOpen[id]; render(); var b = document.querySelector('[data-act="cash-toggle"][data-row="' + id + '"]'); if (b) b.focus(); },
     'cash-sel': function (el) { var k = el.getAttribute('data-key'); if (!C.validKey(k)) return; state.sel = k; try { localStorage.setItem(SEL_KEY, k); } catch (e) { /* ничего */ } render(); },
     'cash-addmonth': function () {
@@ -765,6 +775,25 @@
     selInput: function (el) { if (C.validKey(el.value)) CHG.sel(el); },
     'create-month': function () { reparse(); },
     'create-file': function (el) { if (el.files && el.files.length) readReports(el.files); },
+    'backup-file': function (el) {
+      var f = el.files && el.files[0]; if (!f || !isOwner()) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var b;
+        try { b = JSON.parse(String(rd.result)); } catch (e) { return toast('Это не файл резервной копии (не читается как JSON)', 'err'); }
+        if (!b || b.app !== 'investor-calc' || !b.settings || !b.ledger) return toast('Это не файл резервной копии этого сайта', 'err');
+        var mk = Object.keys(b.months || {}).filter(C.validKey), fk = Object.keys(b.flows || {}).filter(C.validKey);
+        if (!confirm('Восстановить данные из копии от ' + String(b.exportedAt || '').slice(0, 10) + '? Закупки, настройки и месячные расчёты будут заменены данными из файла (месяцев: ' + mk.length + '). Движение средств и месяцы, которых нет в файле, останутся.')) { el.value = ''; return; }
+        var files = ['settings', 'ledger'].concat(mk.map(function (k) { return ['month', k]; }), fk.map(function (k) { return ['flow', k]; }));
+        mutate(function (d) {
+          d.settings = Object.assign(d.settings, b.settings);
+          d.ledger = { batches: b.ledger.batches || [], losses: b.ledger.losses || [], corrections: b.ledger.corrections || [] };
+          mk.forEach(function (k) { d.months[k] = b.months[k]; });
+          fk.forEach(function (k) { d.flows[k] = b.flows[k]; });
+        }, files, 'Данные восстановлены из копии', 'Восстановление из резервной копии');
+      };
+      rd.readAsText(f);
+    },
     'cell-flow': function (el) {
       if (!canFlow()) return;
       var key = el.getAttribute('data-key'), field = el.getAttribute('data-field') === 'out' ? 'out' : 'in', val = C.num(el.value);
