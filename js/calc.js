@@ -396,7 +396,7 @@
     var s = data.settings, L = data.ledger, flows = data.flows || {}, months = data.months;
     var set = new Set(Object.keys(months));
     Object.keys(flows).forEach(function (k) { set.add(k); });
-    L.batches.forEach(function (b) { set.add(b.month); });
+    L.batches.forEach(function (b) { if (!b.opening) set.add(b.month); });
     L.losses.forEach(function (l) { set.add(l.month); });
     L.corrections.forEach(function (c) { set.add(c.month); });
     var keys = Array.from(set).filter(validKey).sort();
@@ -408,7 +408,7 @@
       var calc = rec ? computeMonth(rec, s.mapping, function (p) { return costOf(L.batches, p, key); }) : null;
       var cogs = calc ? calc.totals.cogs : 0, net = calc ? calc.totals.net : 0;
 
-      var purchaseLines = L.batches.filter(function (b) { return b.month === key; }).map(function (b) {
+      var purchaseLines = L.batches.filter(function (b) { return b.month === key && !b.opening; }).map(function (b) {
         var orig = b.costOriginal != null ? num(b.costOriginal) : num(b.cost);
         return { batch: b, value: orig * num(b.qty) };
       });

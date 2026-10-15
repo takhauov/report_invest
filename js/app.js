@@ -294,7 +294,7 @@
       var st = isOwner()
         ? '<select data-change="batch-status" data-id="' + esc(b.id) + '" aria-label="Статус партии"><option value="склад"' + (b.status === 'склад' ? ' selected' : '') + '>на складе</option><option value="путь"' + (b.status === 'путь' ? ' selected' : '') + '>в пути</option></select>'
         : esc(b.status === 'путь' ? 'в пути' : 'на складе');
-      return '<tr><td>' + esc(b.product) + '</td><td>' + esc(C.monthLabel(b.month)) + '</td><td>' + fmt(b.cost) + '</td><td>' + fmt(x.qty) + '</td><td>' + fmt(x.value) + '</td><td>' + st + '</td>' +
+      return '<tr><td>' + esc(b.product) + '</td><td>' + esc(C.monthLabel(b.month)) + (b.opening ? ' <span class="hint">(нач. остаток)</span>' : '') + '</td><td>' + fmt(b.cost) + '</td><td>' + fmt(x.qty) + '</td><td>' + fmt(x.value) + '</td><td>' + st + '</td>' +
         '<td>' + (isOwner() ? '<button class="btn ghost sm" type="button" data-act="del-batch" data-id="' + esc(b.id) + '" aria-label="Удалить партию">' + ICON_X + '</button>' : '') + '</td></tr>';
     };
     h += '<div class="card"><h2>Деньги в товаре</h2><div class="tbl-wrap"><table><thead><tr><th>Товар</th><th>Закуплено</th><th>Руб/шт</th><th>Шт</th><th>Руб</th><th>Статус</th><th></th></tr></thead><tbody>' +
@@ -321,6 +321,7 @@
       '<div><label for="pQty">Количество, шт</label><input id="pQty" name="qty" type="number" step="1" min="1" required' + dis() + '></div>' +
       '<div><label for="pMonth">Месяц закупа</label><input id="pMonth" name="month" type="month" value="' + key + '" required' + dis() + '></div>' +
       '<div><label for="pStatus">Статус</label><select id="pStatus" name="status"' + dis() + '><option value="склад">на складе</option><option value="путь">в пути</option></select></div>' +
+      '<div style="grid-column: 1 / -1"><label style="display:flex;gap:8px;align-items:center;min-height:32px;font-weight:400"><input type="checkbox" name="opening" style="width:auto;min-height:0"' + dis() + '> Начальный остаток: товар уже был у инвестора, деньги за него не списываются (месяц укажите на один раньше первого расчётного, например 08.2026)</label></div>' +
       '<div><button class="btn" type="submit"' + dis() + '>Добавить</button></div></div></form></div>';
 
     // Потери
@@ -848,7 +849,7 @@
       if (!isOwner()) return;
       var fd = new FormData(f), product = String(fd.get('product') || '').trim(), cost = C.num(fd.get('cost')), qty = C.num(fd.get('qty')), month = String(fd.get('month'));
       if (!product || qty <= 0 || cost < 0 || !C.validKey(month)) return toast('Проверьте поля закупки', 'err');
-      mutate(function (d) { d.ledger.batches.push({ id: uid(), month: month, product: product, cost: cost, costOriginal: cost, qty: qty, status: fd.get('status') === 'путь' ? 'путь' : 'склад', createdAt: Date.now() }); },
+      mutate(function (d) { d.ledger.batches.push({ id: uid(), month: month, product: product, cost: cost, costOriginal: cost, qty: qty, status: fd.get('status') === 'путь' ? 'путь' : 'склад', opening: fd.get('opening') ? true : undefined, createdAt: Date.now() }); },
         ['ledger'], 'Закупка добавлена', 'Закупка: ' + product).then(function (ok) { if (ok) f.reset(); });
     },
     loss: function (f) {
