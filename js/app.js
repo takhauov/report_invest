@@ -786,7 +786,17 @@
       try { j = await state.store.read('import/' + key + '.json'); }
       catch (e) { box.innerHTML = '<span class="neg">Не удалось прочитать данные сервиса: ' + esc(e.message || e) + '</span>'; reparse(); return; }
       if (!j || !Array.isArray(j.cabinets) || !j.cabinets.length) {
-        box.innerHTML = '<span class="neg">Файл import/' + esc(key) + '.json не найден или пуст. Проверьте, что сервис выгрузил этот месяц (выгрузка идёт ночью), или загрузите Excel-отчёты.</span>';
+        var why = '';
+        if (state.store.kind !== 'github') why = 'Сайт сейчас работает в локальном режиме и не видит репозиторий. Откройте «Подключение», выберите GitHub, введите репозиторий и токен.';
+        else {
+          try {
+            await state.store.ping();
+            var have = [];
+            try { have = (await state.store.list('import')).filter(function (n) { return /\.json$/.test(n); }); } catch (e2) { have = []; }
+            why = j ? 'Файл найден, но в нём нет кабинетов.' : 'В репозитории ' + state.cfg.owner + '/' + state.cfg.repo + ' (ветка ' + state.cfg.branch + ') нет файла import/' + key + '.json. ' + (have.length ? 'В папке import есть: ' + have.join(', ') + '.' : 'Папки import в этой ветке нет: проверьте имя репозитория и ветку в «Подключении».');
+          } catch (e3) { why = 'Не удаётся открыть репозиторий ' + state.cfg.owner + '/' + state.cfg.repo + ': ' + (e3.message || e3); }
+        }
+        box.innerHTML = '<span class="neg">' + esc(why) + '</span>';
         createCtx.items = createCtx.items.filter(function (it) { return !it.svc; }); reparse(); return;
       }
       if (j.month && j.month !== key) { box.innerHTML = '<span class="neg">В файле данные за ' + esc(j.month) + ', а запрошен ' + esc(key) + '.</span>'; return; }
