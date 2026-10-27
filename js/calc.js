@@ -142,6 +142,61 @@
     return '';
   }
 
+  // Суммы расходов для процентов. Полная нагрузка: всё, что отделяет валовую прибыль по артикулам
+  // от чистой прибыли ОПиУ, кроме процентов по кредитам (они не относятся к инвестору) и фулфилмента (считается отдельно).
+  // Страховка: если период артикулов не соответствует месяцу, выручка по артикулам сильно расходится с ОПиУ — тогда нагрузка не используется.
+  function buildAmounts(articles, base, fotSum, fulfill, netV, interestV, warnings, where, srcName) {
+    var amounts = { fot: fotSum, fulfill: fulfill, base: base };
+    if (netV === undefined) return amounts;
+    var gross = articles.reduce(function (t, a) { return t + a.orgSales * a.profitUnit; }, 0);
+    amounts.net = netV; amounts.interest = Math.abs(interestV || 0); amounts.gross = gross;
+    var artRev = articles.reduce(function (t, a) { return t + a.orgSales * a.price; }, 0);
+    if (Math.abs(artRev / base - 1) <= LOAD_TOLERANCE) amounts.load = gross - netV - amounts.interest - fulfill;
+    else warnings.push('Выручка по артикулам (' + Math.round(artRev) + ' ₽) расходится с ' + srcName + ' (' + Math.round(base) + ' ₽) больше чем на ' + Math.round(LOAD_TOLERANCE * 100) + '%: проверьте период на ' + where + '. Расходы посчитаны только по ФОТ, логистике и сервисам.');
+    return amounts;
+  }
+
+  // Данные сервиса оцифровки: один кабинет из файла import/ГГГГ-ММ.json
+  var SERVICE_MARKETS = { wb: 'wb', ym: 'ym', ozon: 'ozon', wildberries: 'wb', 'яндекс маркет': 'ym', 'яндекс.маркет': 'ym', yandex: 'ym', market: 'ym' };
+  function parseServiceCabinet(cab, label) {
+    var warnings = [], name = String((cab && cab.cabinet) || '').trim();
+    var market = SERVICE_MARKETS[norm(cab && cab.marketplace)] || 'other';
+    if (market === 'other') warnings.push('Неизвестный маркетплейс «' + ((cab && cab.marketplace) || '') + '».');
+    var byArt = new Map();
+    ((cab && cab.articles) || []).forEach(function (r) {
+      var nm = typeof r.article === 'string' ? r.article.trim() : (r.article == null ? '' : String(r.article).trim());
+      if (!nm || /^итого/i.test(nm) || nm === '-1') return;
+      var sales = num(r.organic_qty), price = num(r.avg_price), pu = num(r.profit_per_unit);
+      var a = byArt.get(nm);
+      if (!a) { a = { article: nm, orgSales: 0, wPrice: 0, wProfit: 0, w: 0, fPrice: 0, fProfit: 0 }; byArt.set(nm, a); }
+      a.orgSales += sales;
+      if (sales > 0) { a.wPrice += price * sales; a.wProfit += pu * sales; a.w += sales; }
+      if (price) a.fPrice = price;
+      if (pu) a.fProfit = pu;
+    });
+    var articles = Array.from(byArt.values()).map(function (a) {
+      return { article: a.article, orgSales: a.orgSales, price: a.w > 0 ? a.wPrice / a.w : a.fPrice, profitUnit: a.w > 0 ? a.wProfit / a.w : a.fProfit };
+    });
+    if (!articles.length) warnings.push('В данных сервиса нет ни одной строки с артикулом.');
+    var o = (cab && cab.opiu) || {}, amounts = null, pctFound = false;
+    var base = Math.abs(num(o.realization));
+    if (!base) warnings.push('В данных сервиса нет «Реализации до СПП» — проценты нужно ввести вручную.');
+    else {
+      var netV = o.net_profit == null ? undefined : num(o.net_profit);
+      if (netV === undefined) warnings.push('В данных сервиса нет чистой прибыли — расходы посчитаны по ФОТ, логистике и сервисам без налогов.');
+      amounts = buildAmounts(articles, base, Math.abs(num(o.fot)), Math.abs(num(o.fulfillment)), netV, num(o.interest), warnings, 'периоде выгрузки', 'ОПиУ');
+      pctFound = true;
+    }
+    return {
+      id: market + '|' + norm(name || label || ''),
+      marketplace: market, entity: name, file: label || 'сервис', fromService: true,
+      articles: articles, amounts: amounts, pctFound: pctFound,
+      fotPct: amounts ? (amounts.load !== undefined ? amounts.load : amounts.fot) / amounts.base : null,
+      fulfillPct: amounts ? amounts.fulfill / amounts.base : null,
+      warnings: warnings
+    };
+  }
+
   function parseReport(XLSX, wb, key, fileName) {
     var warnings = [];
     var artName = findSheet(wb, SHEETS_ARTICLES);
@@ -241,17 +296,8 @@
         if (!base) {
           warnings.push('На листе «' + opName + '» нет «Реализация до СПП» за этот месяц — проценты нужно ввести вручную.');
         } else {
-          amounts = { fot: sum, fulfill: f || 0, base: base };
-          // Полная нагрузка: всё, что отделяет валовую прибыль по артикулам от чистой прибыли ОПиУ,
-          // кроме процентов по кредитам (они не относятся к инвестору) и фулфилмента (считается отдельно)
-          if (netV !== undefined) {
-            var gross = articles.reduce(function (t, a2) { return t + a2.orgSales * a2.profitUnit; }, 0);
-            amounts.net = netV; amounts.interest = Math.abs(intV || 0); amounts.gross = gross;
-            // Страховка: если недели на листе артикулов не соответствуют месяцу, выручка по артикулам сильно разойдётся с ОПиУ
-            var artRev = articles.reduce(function (t, a3) { return t + a3.orgSales * a3.price; }, 0);
-            if (Math.abs(artRev / base - 1) <= LOAD_TOLERANCE) amounts.load = gross - netV - amounts.interest - (f || 0);
-            else warnings.push('Выручка по артикулам (' + Math.round(artRev) + ' ₽) расходится с ОПиУ (' + Math.round(base) + ' ₽) больше чем на ' + Math.round(LOAD_TOLERANCE * 100) + '%: проверьте недели на листе «' + artName + '». Расходы посчитаны только по ФОТ, логистике и сервисам.');
-          } else warnings.push('На листе «' + opName + '» не найдена строка «' + NET_LABEL + '» — расходы посчитаны по ФОТ, логистике и сервисам без налогов.');
+          if (netV === undefined) warnings.push('На листе «' + opName + '» не найдена строка «' + NET_LABEL + '» — расходы посчитаны по ФОТ, логистике и сервисам без налогов.');
+          amounts = buildAmounts(articles, base, sum, f || 0, netV, intV, warnings, 'листе «' + artName + '»', 'ОПиУ');
           pctFound = true;
         }
       }
@@ -478,7 +524,7 @@
     MONTHS_RU: MONTHS_RU, MARKET_LABEL: MARKET_LABEL, FOT_LABELS: FOT_LABELS, FULFILL_LABEL: FULFILL_LABEL, DEFAULT_SHARE: DEFAULT_SHARE,
     defaultMapping: defaultMapping, defaultSettings: defaultSettings,
     norm: norm, num: num, validKey: validKey, prevKey: prevKey, monthLabel: monthLabel, parseShare: parseShare, formatShare: formatShare,
-    neededSheets: neededSheets, parseReport: parseReport, blendPct: blendPct, recSources: recSources, shareOf: shareOf,
+    neededSheets: neededSheets, parseReport: parseReport, parseServiceCabinet: parseServiceCabinet, blendPct: blendPct, recSources: recSources, shareOf: shareOf,
     groupByProduct: groupByProduct, monthSold: monthSold, computeMonth: computeMonth,
     sortBatches: sortBatches, costOf: costOf, replayStock: replayStock, moneyInGoods: moneyInGoods, stockMovement: stockMovement, buildLedger: buildLedger
   };

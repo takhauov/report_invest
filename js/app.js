@@ -616,6 +616,7 @@
       '<label for="cMonth">Месяц расчёта</label><input id="cMonth" type="month" value="' + def + '" required data-change="create-month">' +
       '<div style="height:12px"></div>' +
       '<label class="drop" id="drop"><input id="cFile" type="file" accept=".xlsm,.xlsx" multiple data-change="create-file"><span>Перетащите сюда отчёты <b>WB, Яндекс Маркета и Ozon</b> (<b>.xlsm</b> / <b>.xlsx</b>) — можно сразу несколько — или нажмите, чтобы выбрать</span></label>' +
+      '<div class="toolbar" style="margin:10px 0 0"><button type="button" class="btn ghost sm" data-act="from-service">Загрузить из сервиса</button><span class="hint" style="margin:0">данные за выбранный месяц, выгруженные сервисом оцифровки</span></div>' +
       '<div id="cPreview" class="hint">Файлы читаются в вашем браузере. В базу сохраняются только строки по артикулам (продажи, цена, прибыль на единицу) и суммы расходов — сами файлы не загружаются.</div>' +
       '<div class="dlg-actions"><button type="button" class="btn ghost" data-act="dlg-close">Отмена</button><button type="submit" class="btn" id="cGo" disabled>Создать расчёт</button></div></form>');
     var drop = $('#drop');
@@ -660,12 +661,15 @@
     var html = '';
     createCtx.items.forEach(function (it) {
       it.parsed = null;
-      if (it.wb) {
+      if (it.svc) {
+        if (it.svc.month !== key) it.error = 'Данные сервиса относятся к месяцу ' + it.svc.month + ', а выбран ' + key + '. Выберите тот же месяц или загрузите данные заново.';
+        else { it.error = ''; it.parsed = C.parseServiceCabinet(it.svc.cab, 'сервис ' + it.svc.month); it.parsed.generatedAt = it.svc.generatedAt; if (!it.svc.final) it.parsed.warnings.push('Месяц в сервисе ещё не закрыт — данные могут измениться, при необходимости загрузите их заново позже.'); }
+      } else if (it.wb) {
         try { it.parsed = C.parseReport(window.XLSX, it.wb, key, it.name); } catch (e) { it.error = e.message || String(e); }
       }
       if (it.parsed) {
         var p = it.parsed;
-        html += '<div style="margin-top:8px"><b>' + esc(C.MARKET_LABEL[p.marketplace]) + ' · ' + esc(p.entity || it.name) + '</b> — артикулов: ' + p.articles.length + ' · ' +
+        html += '<div style="margin-top:8px"><b>' + (p.fromService ? 'Сервис · ' : '') + esc(C.MARKET_LABEL[p.marketplace]) + ' · ' + esc(p.entity || it.name) + '</b> — артикулов: ' + p.articles.length + ' · ' +
           (p.pctFound ? 'расходы ' + pct(p.fotPct) + ', фулфилмент ' + pct(p.fulfillPct) : 'проценты не найдены') +
           (p.warnings.length ? '<br><span style="color:var(--warn)">' + p.warnings.map(esc).join('<br>') + '</span>' : '') + '</div>';
       } else {
@@ -768,6 +772,25 @@
       a.href = URL.createObjectURL(blob); a.download = 'investor-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     },
+    'from-service': async function () {
+      if (!isOwner() || !createCtx) return;
+      var key = $('#cMonth').value, box = $('#cPreview'), go = $('#cGo');
+      if (!C.validKey(key)) { box.innerHTML = '<span class="neg">Сначала выберите месяц расчёта.</span>'; return; }
+      box.textContent = 'Запрашиваю данные сервиса за ' + key + '…'; go.disabled = true;
+      var j = null;
+      try { j = await state.store.read('import/' + key + '.json'); }
+      catch (e) { box.innerHTML = '<span class="neg">Не удалось прочитать данные сервиса: ' + esc(e.message || e) + '</span>'; reparse(); return; }
+      if (!j || !Array.isArray(j.cabinets) || !j.cabinets.length) {
+        box.innerHTML = '<span class="neg">Файл import/' + esc(key) + '.json не найден или пуст. Проверьте, что сервис выгрузил этот месяц (выгрузка идёт ночью), или загрузите Excel-отчёты.</span>';
+        createCtx.items = createCtx.items.filter(function (it) { return !it.svc; }); reparse(); return;
+      }
+      if (j.month && j.month !== key) { box.innerHTML = '<span class="neg">В файле данные за ' + esc(j.month) + ', а запрошен ' + esc(key) + '.</span>'; return; }
+      createCtx.items = createCtx.items.filter(function (it) { return !it.svc; });
+      j.cabinets.forEach(function (cab) {
+        createCtx.items.push({ name: 'Сервис · ' + (cab.cabinet || cab.marketplace || ''), wb: null, parsed: null, error: '', svc: { month: key, cab: cab, final: !!j.final, generatedAt: j.generated_at || '' } });
+      });
+      reparse();
+    },
     'login-manual': function () { try { localStorage.setItem(NOLOGIN_KEY, '1'); } catch (e) { /* ничего */ } closeDlg(); openConn(); },
     'cash-toggle': function (el) { var id = el.getAttribute('data-row'); cashOpen[id] = !cashOpen[id]; render(); var b = document.querySelector('[data-act="cash-toggle"][data-row="' + id + '"]'); if (b) b.focus(); },
     'cash-sel': function (el) { var k = el.getAttribute('data-key'); if (!C.validKey(k)) return; state.sel = k; try { localStorage.setItem(SEL_KEY, k); } catch (e) { /* ничего */ } render(); },
@@ -864,6 +887,7 @@
       var fresh = parsedSources().map(function (p) {
         return {
           id: p.id, marketplace: p.marketplace, entity: p.entity, file: p.file, loadedAt: Date.now(),
+          fromService: p.fromService || undefined, generatedAt: p.generatedAt || undefined,
           articles: p.articles.map(function (a) { return { article: a.article, orgSales: a.orgSales, price: Math.round(a.price * 10000) / 10000, profitUnit: Math.round(a.profitUnit * 10000) / 10000 }; }),
           amounts: p.amounts, pctFound: p.pctFound
         };

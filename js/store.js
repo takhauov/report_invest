@@ -73,6 +73,7 @@
     if (!res.ok) throw await this.err(res);
     var j = await res.json();
     this.shas.set(path, j.sha);
+    if (!j.content) throw new Error('Файл ' + path + ' больше 1 МБ — GitHub не отдаёт такие файлы через API. Разбейте данные на части.');
     return JSON.parse(b64dec(j.content));
   };
   GitHubStore.prototype.write = async function (path, obj, message) {
