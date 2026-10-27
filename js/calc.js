@@ -356,7 +356,7 @@
   }
 
   // Продано для инвестора = доля (по умолчанию 1/3) органических продаж, округлённая вверх
-  function soldOf(orgSales, share) { return Math.ceil(orgSales * share - 1e-9); }
+  function soldOf(orgSales, share) { return Math.max(0, Math.ceil(orgSales * share - 1e-9)); } // отрицательные органические продажи (самовыкуп из другого месяца) не дают отрицательных продаж
 
   function monthSold(rec, mapping, availFn) {
     var out = {}, share = shareOf(rec);

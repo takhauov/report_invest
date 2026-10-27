@@ -277,10 +277,11 @@
     var srcs = C.recSources(rec);
     h += '<div class="card"><h2>Отчёты за месяц</h2><div class="tbl-wrap"><table><thead><tr><th>Маркетплейс</th><th>Кабинет</th><th>Файл</th><th>Артикулов</th><th>Расходы, % от реализации</th><th>Фулфилмент</th><th></th></tr></thead><tbody>' +
       srcs.map(function (s) {
-        return '<tr><td>' + esc(C.MARKET_LABEL[s.marketplace] || s.marketplace) + '</td><td class="left">' + esc(s.entity || '—') + '</td><td class="left">' + esc(s.file || '—') + '</td><td>' + fmt((s.articles || []).length) + '</td>' +
+        return '<tr><td>' + esc(C.MARKET_LABEL[s.marketplace] || s.marketplace) + '</td><td class="left">' + esc(s.entity || '—') + '</td><td class="left">' + (s.fromService ? 'Сервис' + (s.final === false ? ' · <b style="color:var(--warn)">предварительно</b>' : '') + (s.generatedAt ? ' · ' + esc(String(s.generatedAt).slice(0, 10)) : '') : esc(s.file || '—')) + '</td><td>' + fmt((s.articles || []).length) + '</td>' +
           '<td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fot / s.amounts.base) : '—') + '</td><td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fulfill / s.amounts.base) : '—') + '</td>' +
           '<td>' + (isOwner() ? '<button class="btn ghost sm" type="button" data-act="del-source" data-id="' + esc(s.id) + '" aria-label="Убрать отчёт">' + ICON_X + '</button>' : '') + '</td></tr>';
       }).join('') + '</tbody></table></div>' +
+      (srcs.some(function (s) { return s.fromService && s.final === false; }) ? '<div class="note warn" style="margin-top:12px">Часть данных предварительная: сервис ещё не закрыл этот месяц, цифры могут измениться. Обновите их кнопкой «Создать расчёт» → «Загрузить из сервиса» позже.</div>' : '') +
       '<p class="hint">Общие проценты = сумма расходов по всем отчётам ÷ сумма их «Реализации до СПП». Новый файл того же кабинета заменяет прежний, остальные остаются.</p></div>';
 
     // Как получена средняя прибыль
@@ -663,7 +664,7 @@
       it.parsed = null;
       if (it.svc) {
         if (it.svc.month !== key) it.error = 'Данные сервиса относятся к месяцу ' + it.svc.month + ', а выбран ' + key + '. Выберите тот же месяц или загрузите данные заново.';
-        else { it.error = ''; it.parsed = C.parseServiceCabinet(it.svc.cab, 'сервис ' + it.svc.month); it.parsed.generatedAt = it.svc.generatedAt; if (!it.svc.final) it.parsed.warnings.push('Месяц в сервисе ещё не закрыт — данные могут измениться, при необходимости загрузите их заново позже.'); }
+        else { it.error = ''; it.parsed = C.parseServiceCabinet(it.svc.cab, 'сервис ' + it.svc.month); it.parsed.generatedAt = it.svc.generatedAt; it.parsed.final = !!it.svc.final; if (!it.svc.final) it.parsed.warnings.push('Месяц в сервисе ещё не закрыт — данные могут измениться, при необходимости загрузите их заново позже.'); }
       } else if (it.wb) {
         try { it.parsed = C.parseReport(window.XLSX, it.wb, key, it.name); } catch (e) { it.error = e.message || String(e); }
       }
@@ -684,6 +685,10 @@
       var old = state.data.months[key];
       if (old) html += '<div style="margin-top:8px;color:var(--warn)">Расчёт за этот месяц уже есть: отчёты тех же кабинетов будут заменены, остальные останутся.</div>';
       go.textContent = old ? 'Обновить расчёт' : 'Создать расчёт';
+      var oldManual = old ? C.recSources(old).filter(function (x) { return !x.fromService; }) : [];
+      if (ok.every(function (x) { return x.fromService; }) && oldManual.length) {
+        html += '<label class="check" style="margin-top:8px"><input type="checkbox" id="cReplaceAll" checked>Заменить прежние отчёты месяца (' + oldManual.length + ', из Excel) данными сервиса</label><div class="hint" style="margin-top:4px">Иначе кабинеты из Excel и из сервиса сложатся и продажи удвоятся.</div>';
+      }
     }
     box.innerHTML = html;
     go.disabled = !ok.length;
@@ -887,7 +892,7 @@
       var fresh = parsedSources().map(function (p) {
         return {
           id: p.id, marketplace: p.marketplace, entity: p.entity, file: p.file, loadedAt: Date.now(),
-          fromService: p.fromService || undefined, generatedAt: p.generatedAt || undefined,
+          fromService: p.fromService || undefined, generatedAt: p.generatedAt || undefined, final: p.fromService ? !!p.final : undefined,
           articles: p.articles.map(function (a) { return { article: a.article, orgSales: a.orgSales, price: Math.round(a.price * 10000) / 10000, profitUnit: Math.round(a.profitUnit * 10000) / 10000 }; }),
           amounts: p.amounts, pctFound: p.pctFound
         };
@@ -895,10 +900,11 @@
       if (!fresh.length || !C.validKey(key)) return;
       var ids = new Set(fresh.map(function (x) { return x.id; }));
       var existed = !!state.data.months[key];
+      var repAll = $('#cReplaceAll') ? $('#cReplaceAll').checked : false;
       closeDlg();
       mutate(function (d) {
         var old = d.months[key];
-        var keep = old ? C.recSources(old).filter(function (x) { return !ids.has(x.id); }) : [];
+        var keep = old && !repAll ? C.recSources(old).filter(function (x) { return !ids.has(x.id); }) : [];
         var sources = keep.concat(fresh), bl = C.blendPct(sources);
         var rec = old || { key: key, createdAt: Date.now(), share: s.investorShare };
         delete rec.articles; delete rec.source;
