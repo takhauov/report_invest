@@ -275,7 +275,7 @@
 
     // Откуда взялись данные
     var srcs = C.recSources(rec);
-    h += '<div class="card"><h2>Отчёты за месяц</h2><div class="tbl-wrap"><table><thead><tr><th>Маркетплейс</th><th>Кабинет</th><th>Файл</th><th>Артикулов</th><th>Расходы, % от реализации</th><th>Фулфилмент</th><th></th></tr></thead><tbody>' +
+    h += '<div class="card"><h2>Отчёты за месяц</h2><div class="tbl-wrap"><table><thead><tr><th>Маркетплейс</th><th class="left">Кабинет</th><th class="left">Файл</th><th>Артикулов</th><th>Расходы, % от реализации</th><th>Фулфилмент</th><th></th></tr></thead><tbody>' +
       srcs.map(function (s) {
         return '<tr><td>' + esc(C.MARKET_LABEL[s.marketplace] || s.marketplace) + '</td><td class="left">' + esc(s.entity || '—') + '</td><td class="left">' + (s.fromService ? 'Сервис' + (s.final === false ? ' · <b style="color:var(--warn)">предварительно</b>' : '') + (s.generatedAt ? ' · ' + esc(String(s.generatedAt).slice(0, 10)) : '') : esc(s.file || '—')) + '</td><td>' + fmt((s.articles || []).length) + '</td>' +
           '<td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fot / s.amounts.base) : '—') + '</td><td>' + (s.amounts && s.amounts.base ? pct(s.amounts.fulfill / s.amounts.base) : '—') + '</td>' +
@@ -285,7 +285,7 @@
       '<p class="hint">Общие проценты = сумма расходов по всем отчётам ÷ сумма их «Реализации до СПП». Новый файл того же кабинета заменяет прежний, остальные остаются.</p></div>';
 
     // Как получена средняя прибыль
-    h += '<details class="card"><summary style="cursor:pointer;font-weight:600;min-height:32px">Как получены средние цена и прибыль на единицу</summary><div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Товар / артикул</th><th>Маркетплейс</th><th>Кабинет</th><th>Продаж (орг.)</th><th>Цена, ₽</th><th>Прибыль/ед, ₽</th></tr></thead><tbody>' +
+    h += '<details class="card"><summary style="cursor:pointer;font-weight:600;min-height:32px">Как получены средние цена и прибыль на единицу</summary><div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Товар / артикул</th><th>Маркетплейс</th><th class="left">Кабинет</th><th>Продаж (орг.)</th><th>Цена, ₽</th><th>Прибыль/ед, ₽</th></tr></thead><tbody>' +
       calc.products.map(function (p) {
         return '<tr class="section"><td colspan="6">' + esc(p.product) + ' — в среднем: цена ' + fmt(p.price) + ' ₽, прибыль ' + fmt(p.profitUnit) + ' ₽ на единицу, всего продаж ' + fmt(p.orgSales) + '</td></tr>' +
           p.rows.map(function (r) {
@@ -357,7 +357,7 @@
     // Потери
     var losses = d.ledger.losses.filter(function (l) { return l.month === key; });
     h += '<div class="card"><h2>Потеря товара · ' + esc(C.monthLabel(key)) + '</h2>' +
-      (losses.length ? '<div class="tbl-wrap"><table><thead><tr><th>Товар</th><th>Шт</th><th>Руб/шт</th><th>Руб</th><th>Комментарий</th><th></th></tr></thead><tbody>' +
+      (losses.length ? '<div class="tbl-wrap"><table><thead><tr><th>Товар</th><th>Шт</th><th>Руб/шт</th><th>Руб</th><th class="left">Комментарий</th><th></th></tr></thead><tbody>' +
         state.L.byKey[key].lossLines.map(function (x) {
           return '<tr><td>' + esc(x.loss.product) + '</td><td>' + fmt(x.loss.qty) + '</td><td>' + fmt(x.cost) + '</td><td>' + fmt(x.value) + '</td><td class="left">' + esc(x.loss.comment || '') + '</td>' +
             '<td>' + (isOwner() ? '<button class="btn ghost sm" type="button" data-act="del-loss" data-id="' + esc(x.loss.id) + '" aria-label="Удалить потерю">' + ICON_X + '</button>' : '') + '</td></tr>';
