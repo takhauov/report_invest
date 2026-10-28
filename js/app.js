@@ -551,7 +551,7 @@
 
     h += productsDatalist();
     h += '<div class="card"><h2>Соответствие артикулов WB и товаров инвестора</h2><p class="hint" style="margin-top:0">Несколько артикулов можно привязать к одному товару — продажи сложатся. Артикулы без привязки в расчёт не попадают.</p>' +
-      '<form data-form="map"><div class="tbl-wrap"><table><thead><tr><th>Артикул в отчёте WB</th><th>Товар инвестора</th><th></th></tr></thead><tbody id="mapRows">' +
+      '<form data-form="map"><div class="tbl-wrap"><table><thead><tr><th>Артикул в отчёте WB</th><th class="left">Товар инвестора</th><th></th></tr></thead><tbody id="mapRows">' +
       Object.keys(map).sort(function (a, b) { return map[a].localeCompare(map[b], 'ru') || a.localeCompare(b, 'ru'); }).map(function (a) {
         return mapRow(a, map[a]);
       }).join('') + '</tbody></table></div>' +
